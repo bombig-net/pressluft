@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 
 GO ?= go
-NPM ?= npm
+NPM ?= pnpm
 APP_BINARY ?= bin/pressluft
 AGENT_BINARY ?= bin/pressluft-agent
 DEV_API_PORT ?= 8081
