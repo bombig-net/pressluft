@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +23,7 @@ import (
 	"pressluft/internal/dispatch"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/pki"
+	"pressluft/internal/platform"
 	"pressluft/internal/provider"
 	"pressluft/internal/registration"
 	"pressluft/internal/runner/ansible"
@@ -37,6 +40,13 @@ const defaultAddr = ":8080"
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	executionMode, err := platform.NormalizeControlPlaneExecutionMode(os.Getenv("PRESSLUFT_EXECUTION_MODE"), isDevBuild())
+	if err != nil {
+		log.Fatalf("resolve execution mode: %v", err)
+	}
+	logExecutionMode(logger, executionMode)
 
 	ageKeyPath := strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH"))
 	allowGenerate := false
@@ -107,7 +117,7 @@ func main() {
 	})
 
 	hub := ws.NewHub()
-	agentRunner := dispatch.NewAgentRunner(hub, jobStore)
+	agentRunner := dispatch.NewAgentRunner(hub, jobStore, logger)
 
 	// Create worker with executor
 	executor := worker.NewExecutor(
@@ -125,7 +135,9 @@ func main() {
 			FirewallsPlaybookPath: firewallsPlaybookPath,
 			VolumePlaybookPath:    volumePlaybookPath,
 			ControlPlaneURL:       controlPlaneURL,
+			ExecutionMode:         executionMode,
 			DevTokenStore:         agentTokenStore,
+			RegistrationStore:     registrationStore,
 			AgentRunner:           agentRunner,
 		},
 		logger,
@@ -141,8 +153,8 @@ func main() {
 
 	resultWaiter := ws.NewResultWaiter()
 	hub.SetResultWaiter(resultWaiter)
-	completer := dispatch.NewCompleter(jobStore, &activityLoggerAdapter{logger: logger}, logger)
-	wsHandler := ws.NewHandler(hub, completer, resultWaiter, logger)
+	completer := dispatch.NewCompleter(jobStore, activityStore, logger)
+	wsHandler := ws.NewHandler(hub, completer, resultWaiter, serverStore, logger)
 	wsHTTPHandler := server.NewWSHandler(hub, wsHandler, pkiStore, agentTokenStore, logger)
 	nodeHandler := server.NewNodeHandler(db.DB, pkiStore, registrationStore, ca, logger)
 
@@ -153,6 +165,23 @@ func main() {
 		Addr:              resolveAddr(),
 		Handler:           server.WithRequestLogging(server.NewHandlerWithHub(db.DB, hub, wsHTTPHandler, nodeHandler), logger),
 		ReadHeaderTimeout: 5 * time.Second,
+	}
+	listenAndServe := func() error {
+		return httpServer.ListenAndServe()
+	}
+	if executionMode == platform.ExecutionModeProductionBootstrap {
+		tlsCertFile, tlsKeyFile, err := resolveProductionTLSConfig(controlPlaneURL)
+		if err != nil {
+			log.Fatalf("resolve production TLS config: %v", err)
+		}
+		httpServer.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ClientAuth: tls.VerifyClientCertIfGiven,
+			ClientCAs:  ca.CertPool(),
+		}
+		listenAndServe = func() error {
+			return httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+		}
 	}
 
 	// Handle shutdown signals
@@ -173,11 +202,29 @@ func main() {
 	}()
 
 	logger.Info("pressluft listening", "addr", httpServer.Addr)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := listenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server failed: %v", err)
 	}
 
 	logger.Info("pressluft stopped")
+}
+
+func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
+	logger.Info("platform contract loaded",
+		"execution_mode", mode,
+		"contract_ref", "README.md#platform-contract",
+		"lifecycle_note", "docs/internal/lifecycle-state-semantics.md",
+		"glossary", "docs/glossary.md",
+	)
+
+	switch mode {
+	case platform.ExecutionModeDev:
+		logger.Info("development transport enabled", "agent_trust", "dev websocket token", "server_tls", "not required")
+	case platform.ExecutionModeSingleNodeLocal:
+		logger.Warn("single-node local control plane mode is for local infrastructure work only", "agent_bootstrap", "disabled", "provider_support", "hetzner only")
+	case platform.ExecutionModeProductionBootstrap:
+		logger.Info("production bootstrap path enabled", "server_tls", "required in-process", "agent_transport", "wss plus mTLS")
+	}
 }
 
 func resolveAddr() string {
@@ -214,15 +261,6 @@ func resolveCAKeyPath() string {
 		return p
 	}
 	return filepath.Join(resolveDataDir(), "pressluft", "ca.key")
-}
-
-type activityLoggerAdapter struct {
-	logger *slog.Logger
-}
-
-func (a *activityLoggerAdapter) Log(ctx context.Context, serverID int64, action string, details string) error {
-	a.logger.Info("agent log", "server_id", serverID, "action", action, "details", details)
-	return nil
 }
 
 func resolveAnsibleBinary(ansibleDir string) (string, error) {
@@ -271,4 +309,20 @@ func logAnsibleVersion(binaryPath, workingDir string, logger *slog.Logger) error
 	}
 	logger.Info("ansible preflight", "binary", binaryPath, "version", strings.TrimSpace(string(output)))
 	return nil
+}
+
+func resolveProductionTLSConfig(controlPlaneURL string) (string, string, error) {
+	tlsCertFile := strings.TrimSpace(os.Getenv("PRESSLUFT_TLS_CERT_FILE"))
+	tlsKeyFile := strings.TrimSpace(os.Getenv("PRESSLUFT_TLS_KEY_FILE"))
+	if tlsCertFile == "" || tlsKeyFile == "" {
+		return "", "", fmt.Errorf("PRESSLUFT_TLS_CERT_FILE and PRESSLUFT_TLS_KEY_FILE are required in production-bootstrap mode")
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(controlPlaneURL))
+	if err != nil {
+		return "", "", fmt.Errorf("parse PRESSLUFT_CONTROL_PLANE_URL: %w", err)
+	}
+	if parsedURL.Scheme != "https" || parsedURL.Host == "" {
+		return "", "", fmt.Errorf("PRESSLUFT_CONTROL_PLANE_URL must be an https URL in production-bootstrap mode")
+	}
+	return tlsCertFile, tlsKeyFile, nil
 }

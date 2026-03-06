@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	caLifetimeYears = 10
+	caLifetimeYears  = 10
+	nodeCertLifetime = 90 * 24 * time.Hour
 )
 
 type CA struct {
@@ -134,6 +135,15 @@ func (ca *CA) Certificate() *x509.Certificate {
 }
 
 func (ca *CA) SignCSR(csr *x509.CertificateRequest, validityDays int) (*x509.Certificate, error) {
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("verify CSR signature: %w", err)
+	}
+	validity := nodeCertLifetime
+	if validityDays > 0 {
+		validity = time.Duration(validityDays) * 24 * time.Hour
+	}
+	now := time.Now().UTC()
+
 	serialNumber, err := generateSerialNumber()
 	if err != nil {
 		return nil, err
@@ -142,8 +152,8 @@ func (ca *CA) SignCSR(csr *x509.CertificateRequest, validityDays int) (*x509.Cer
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject:      csr.Subject,
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().AddDate(0, validityDays, 0),
+		NotBefore:    now,
+		NotAfter:     now.Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}

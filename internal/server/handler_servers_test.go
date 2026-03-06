@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 
+	"pressluft/internal/orchestrator"
+	"pressluft/internal/platform"
+
 	_ "modernc.org/sqlite"
 
 	"pressluft/internal/provider"
@@ -124,6 +127,137 @@ func TestServersCreateEndpointValidationFailure(t *testing.T) {
 
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusBadRequest)
+	}
+}
+
+func TestServersCreateEndpointRejectsUnavailableProfile(t *testing.T) {
+	registerTestServerProvider()
+
+	db := mustOpenServerHandlerDB(t)
+	providerID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
+
+	handler := NewHandler(db)
+	body := map[string]any{
+		"provider_id": providerID,
+		"name":        "agency-prod-01",
+		"location":    "fsn1",
+		"server_type": "cx22",
+		"profile_key": "openlitespeed-stack",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/servers", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusBadRequest)
+	}
+	if !bytes.Contains(res.Body.Bytes(), []byte("fully supports nginx-stack first")) {
+		t.Fatalf("response body = %q, want support-matrix reason", res.Body.String())
+	}
+}
+
+func TestServersDeleteEndpointQueuesAsyncDeletion(t *testing.T) {
+	registerTestServerProvider()
+
+	db := mustOpenServerHandlerDB(t)
+	providerID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
+	serverID := mustInsertServerRecord(t, db, providerID, string(platform.ServerStatusReady))
+
+	handler := NewHandler(db)
+	req := httptest.NewRequest(http.MethodDelete, "/api/servers/"+intToString(serverID), nil)
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body = %s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["status"] != string(platform.ServerStatusDeleting) {
+		t.Fatalf("status payload = %v, want %q", payload["status"], platform.ServerStatusDeleting)
+	}
+
+	server, err := NewServerStore(db).GetByID(context.Background(), serverID)
+	if err != nil {
+		t.Fatalf("get server: %v", err)
+	}
+	if server.Status != string(platform.ServerStatusDeleting) {
+		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusDeleting)
+	}
+
+	jobs, err := orchestrator.NewStore(db).ListJobsByServer(context.Background(), serverID)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Kind != "delete_server" {
+		t.Fatalf("jobs = %+v, want one delete_server job", jobs)
+	}
+	if jobs[0].Status != orchestrator.JobStatusQueued {
+		t.Fatalf("job status = %q, want %q", jobs[0].Status, orchestrator.JobStatusQueued)
+	}
+}
+
+func TestServersDeleteEndpointRejectsDuplicateDeletion(t *testing.T) {
+	registerTestServerProvider()
+
+	db := mustOpenServerHandlerDB(t)
+	providerID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
+	serverID := mustInsertServerRecord(t, db, providerID, string(platform.ServerStatusReady))
+
+	handler := NewHandler(db)
+	firstReq := httptest.NewRequest(http.MethodDelete, "/api/servers/"+intToString(serverID), nil)
+	firstRes := httptest.NewRecorder()
+	handler.ServeHTTP(firstRes, firstReq)
+	if firstRes.Code != http.StatusAccepted {
+		t.Fatalf("first delete status = %d, want %d", firstRes.Code, http.StatusAccepted)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodDelete, "/api/servers/"+intToString(serverID), nil)
+	secondRes := httptest.NewRecorder()
+	handler.ServeHTTP(secondRes, secondReq)
+
+	if secondRes.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body = %s", secondRes.Code, http.StatusConflict, secondRes.Body.String())
+	}
+}
+
+func TestAllAgentStatusIncludesStoredOfflineNodes(t *testing.T) {
+	registerTestServerProvider()
+
+	db := mustOpenServerHandlerDB(t)
+	providerID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
+	serverID := mustInsertServerRecord(t, db, providerID, string(platform.ServerStatusReady))
+	store := NewServerStore(db)
+	if err := store.UpdateNodeStatus(context.Background(), serverID, "offline", "2026-01-01T00:00:00Z", "1.0.0"); err != nil {
+		t.Fatalf("update node status: %v", err)
+	}
+
+	handler := NewHandler(db)
+	req := httptest.NewRequest(http.MethodGet, "/api/servers/agents", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
+	}
+
+	var payload map[string]map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	entry, ok := payload[strconv.FormatInt(serverID, 10)]
+	if !ok {
+		t.Fatalf("payload missing server %d: %+v", serverID, payload)
+	}
+	if entry["status"] != "offline" {
+		t.Fatalf("status = %v, want offline", entry["status"])
 	}
 }
 
@@ -254,6 +388,9 @@ func mustOpenServerHandlerDB(t *testing.T) *sql.DB {
 			retry_count  INTEGER NOT NULL DEFAULT 0,
 			last_error   TEXT,
 			payload      TEXT,
+			started_at   TEXT,
+			finished_at  TEXT,
+			timeout_at   TEXT,
 			command_id   TEXT,
 			created_at   TEXT    NOT NULL,
 			updated_at   TEXT    NOT NULL,
@@ -308,4 +445,28 @@ func mustInsertProviderRecord(t *testing.T, db *sql.DB, providerType, name, toke
 
 func intToString(v int64) string {
 	return strconv.FormatInt(v, 10)
+}
+
+func mustInsertServerRecord(t *testing.T, db *sql.DB, providerID int64, status string) int64 {
+	t.Helper()
+	res, err := db.Exec(
+		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		providerID,
+		"test-server-provider",
+		"agency-prod-01",
+		"fsn1",
+		"cx22",
+		"ubuntu-24.04",
+		"nginx-stack",
+		status,
+	)
+	if err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("server insert id: %v", err)
+	}
+	return id
 }

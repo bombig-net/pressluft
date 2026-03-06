@@ -59,10 +59,11 @@ func NewHandlerWithHub(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHandle
 		mux.HandleFunc("/api/providers/types", ph.handleTypes)
 
 		jobStore := orchestrator.NewStore(db)
+		serverStore := NewServerStore(db)
 
 		sh := &serversHandler{
 			providerStore: provider.NewStore(db),
-			serverStore:   NewServerStore(db),
+			serverStore:   serverStore,
 			jobStore:      jobStore,
 			activityStore: activityStore,
 			hub:           hub,
@@ -72,6 +73,7 @@ func NewHandlerWithHub(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHandle
 
 		jh := &jobsHandler{
 			store:         jobStore,
+			serverStore:   serverStore,
 			activityStore: activityStore,
 		}
 		mux.HandleFunc("/api/jobs", jh.route)

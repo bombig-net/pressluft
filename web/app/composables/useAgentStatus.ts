@@ -64,6 +64,7 @@ export function useAgentStatus(serverId: Ref<number | null>, options: UseAgentSt
     agentInfo: readonly(agentInfo),
     loading: readonly(loading),
     error: readonly(error),
+    // `connected` is live session state; `status` is the durable backend node status.
     fetch,
     startPolling,
     stopPolling,
@@ -106,6 +107,11 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
     return info?.connected ?? false
   }
 
+  const isReachable = (serverId: number): boolean => {
+    const info = agentInfoMap.value[serverId]
+    return info?.status === 'online' || info?.status === 'unhealthy'
+  }
+
   const getStatusType = (serverId: number): AgentStatusType => {
     const info = agentInfoMap.value[serverId]
     return info?.status ?? 'unknown'
@@ -142,6 +148,7 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
     fetch,
     getStatus,
     isConnected,
+    isReachable,
     getStatusType,
     startPolling,
     stopPolling,

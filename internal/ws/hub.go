@@ -83,9 +83,13 @@ func (h *Hub) ConnectedServerIDs() []int64 {
 
 func (h *Hub) Range(fn func(serverID int64, conn *Conn) bool) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
+	snapshot := make(map[int64]*Conn, len(h.conns))
 	for id, conn := range h.conns {
+		snapshot[id] = conn
+	}
+	h.mu.RUnlock()
+
+	for id, conn := range snapshot {
 		if !fn(id, conn) {
 			break
 		}

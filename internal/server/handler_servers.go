@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"pressluft/internal/activity"
+	"pressluft/internal/agentcommand"
 	"pressluft/internal/orchestrator"
+	"pressluft/internal/platform"
 	"pressluft/internal/provider"
 	"pressluft/internal/server/profiles"
 	"pressluft/internal/ws"
@@ -157,13 +160,9 @@ func (sh *serversHandler) handleGetServer(w http.ResponseWriter, r *http.Request
 }
 
 func (sh *serversHandler) handleDeleteServer(w http.ResponseWriter, r *http.Request, serverID int64) {
-	// Get server name before deletion for activity message
-	var serverName string
-	if server, err := sh.serverStore.GetByID(r.Context(), serverID); err == nil {
-		serverName = server.Name
-	}
-
-	if err := sh.serverStore.Delete(r.Context(), serverID); err != nil {
+	slog.Default().Info("server action requested", "action", "delete_server", "server_id", serverID)
+	serverRecord, err := sh.serverStore.GetByID(r.Context(), serverID)
+	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			respondError(w, http.StatusNotFound, err.Error())
 			return
@@ -172,24 +171,53 @@ func (sh *serversHandler) handleDeleteServer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Emit activity for server deletion
-	if sh.activityStore != nil {
-		title := "Server deleted"
-		if serverName != "" {
-			title = fmt.Sprintf("Server '%s' deleted", serverName)
+	_, job, err := sh.serverStore.QueueServerJob(r.Context(), QueueServerJobInput{
+		ServerID: serverID,
+		Kind:     string(orchestrator.JobKindDeleteServer),
+		Payload:  fmt.Sprintf(`{"server_name":%q}`, serverRecord.Name),
+	})
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			respondError(w, http.StatusNotFound, err.Error())
+		case err == ErrServerDeleting || err == ErrServerDeleted || strings.Contains(err.Error(), ErrServerActionConflict.Error()):
+			respondError(w, http.StatusConflict, err.Error())
+		default:
+			respondError(w, http.StatusInternalServerError, err.Error())
 		}
+		return
+	}
+
+	_, _ = sh.jobStore.AppendEvent(r.Context(), job.ID, orchestrator.CreateEventInput{
+		EventType: "job_created",
+		Level:     "info",
+		Status:    string(job.Status),
+		Message:   "Server deletion job queued",
+	})
+
+	if sh.activityStore != nil {
+		title := fmt.Sprintf("Server '%s' deletion requested", serverRecord.Name)
 		_, _ = sh.activityStore.Emit(r.Context(), activity.EmitInput{
-			EventType:    activity.EventServerDeleted,
+			EventType:    activity.EventServerStatusChanged,
 			Category:     activity.CategoryServer,
 			Level:        activity.LevelInfo,
 			ResourceType: activity.ResourceServer,
 			ResourceID:   serverID,
 			ActorType:    activity.ActorUser,
 			Title:        title,
+			Message:      "Delete runs asynchronously through the orchestrator until provider-side removal succeeds or fails.",
 		})
 	}
+	slog.Default().Info("server action queued", "action", "delete_server", "server_id", serverID, "job_id", job.ID, "server_status", platform.ServerStatusDeleting)
 
-	w.WriteHeader(http.StatusNoContent)
+	respondJSON(w, http.StatusAccepted, map[string]any{
+		"server_id":   serverID,
+		"job_id":      job.ID,
+		"status":      string(platform.ServerStatusDeleting),
+		"job_status":  job.Status,
+		"async":       true,
+		"description": "Server deletion queued",
+	})
 }
 
 func (sh *serversHandler) handleListServerJobs(w http.ResponseWriter, r *http.Request, serverID int64) {
@@ -296,6 +324,7 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	slog.Default().Info("server action requested", "action", "create_server", "provider_id", req.ProviderID, "server_name", req.Name, "profile_key", req.ProfileKey)
 
 	if err := validateCreateServerHTTPRequest(req); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -305,6 +334,14 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	profile, ok := profiles.Get(req.ProfileKey)
 	if !ok {
 		respondError(w, http.StatusBadRequest, "unsupported profile_key: "+req.ProfileKey)
+		return
+	}
+	if !profile.Selectable() {
+		reason := strings.TrimSpace(profile.SupportReason)
+		if reason == "" {
+			reason = "profile is not selectable in the current platform contract"
+		}
+		respondError(w, http.StatusBadRequest, reason)
 		return
 	}
 
@@ -375,6 +412,7 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		"job_id":    job.ID,
 		"status":    "pending",
 	})
+	slog.Default().Info("server action queued", "action", "create_server", "server_id", serverID, "job_id", job.ID, "server_status", platform.ServerStatusPending)
 }
 
 func (sh *serversHandler) handleRebuildOptions(w http.ResponseWriter, r *http.Request, serverID int64) {
@@ -620,12 +658,24 @@ func (sh *serversHandler) handleAllAgentStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if sh.hub == nil {
-		respondJSON(w, http.StatusOK, map[int64]ws.AgentInfo{})
+	servers, err := sh.serverStore.List(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, sh.hub.GetAllAgentInfo())
+	result := make(map[int64]ws.AgentInfo, len(servers))
+	for _, server := range servers {
+		result[server.ID] = storedAgentInfo(server)
+	}
+
+	if sh.hub != nil {
+		for serverID, info := range sh.hub.GetAllAgentInfo() {
+			result[serverID] = info
+		}
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 // handleAgentStatus returns real-time agent connection status and metrics.
@@ -637,23 +687,15 @@ func (sh *serversHandler) handleAgentStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// If we have a hub, get real-time status
 	if sh.hub != nil {
-		info := sh.hub.GetAgentInfo(serverID)
-		respondJSON(w, http.StatusOK, info)
-		return
+		if _, ok := sh.hub.Get(serverID); ok {
+			info := sh.hub.GetAgentInfo(serverID)
+			respondJSON(w, http.StatusOK, info)
+			return
+		}
 	}
 
-	// Fallback to stored status from database
-	status := ws.AgentStatusUnknown
-	if server.NodeStatus != "" {
-		status = ws.AgentStatus(server.NodeStatus)
-	}
-
-	respondJSON(w, http.StatusOK, ws.AgentInfo{
-		Connected: false,
-		Status:    status,
-	})
+	respondJSON(w, http.StatusOK, storedAgentInfo(*server))
 }
 
 // Service represents a systemd service on the server.
@@ -700,12 +742,16 @@ func (sh *serversHandler) handleListServices(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	timeout := agentcommand.Timeout(agentcommand.TypeListServices)
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	cmd := ws.Command{
 		ID:   uuid.NewString(),
-		Type: "list_services",
+		Type: agentcommand.TypeListServices,
 	}
 
 	result, err := sh.hub.SendCommandAndWait(ctx, serverID, cmd)
@@ -722,8 +768,8 @@ func (sh *serversHandler) handleListServices(w http.ResponseWriter, r *http.Requ
 	var payload struct {
 		Services []Service `json:"services"`
 	}
-	if result.Output != "" {
-		if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+	if len(result.Payload) > 0 {
+		if err := json.Unmarshal(result.Payload, &payload); err != nil {
 			respondError(w, http.StatusBadGateway, "invalid service response")
 			return
 		}
@@ -734,4 +780,22 @@ func (sh *serversHandler) handleListServices(w http.ResponseWriter, r *http.Requ
 		AgentConnected: true,
 		Services:       payload.Services,
 	})
+}
+
+func storedAgentInfo(server StoredServer) ws.AgentInfo {
+	status := ws.AgentStatusUnknown
+	if server.NodeStatus != "" {
+		status = ws.AgentStatus(server.NodeStatus)
+	}
+	info := ws.AgentInfo{
+		Connected: status == ws.AgentStatusOnline,
+		Status:    status,
+		Version:   server.NodeVersion,
+	}
+	if server.NodeLastSeen != "" {
+		if parsed, err := time.Parse(time.RFC3339, server.NodeLastSeen); err == nil {
+			info.LastSeen = parsed
+		}
+	}
+	return info
 }

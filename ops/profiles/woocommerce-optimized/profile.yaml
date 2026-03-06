@@ -1,9 +1,20 @@
 key: woocommerce-optimized
 name: WooCommerce Optimized
-version: 0.2.0
+version: 1.0.0
 description: >
-  Commerce-oriented profile with defaults tuned for WooCommerce checkout and
-  catalog performance.
+  Reserved internal profile identifier for future commerce-oriented tuning. It
+  does not imply WooCommerce compatibility, rewrite support, or performance
+  guarantees today.
+
+configure_guarantee: >
+  Selection is blocked. Pressluft does not yet converge or verify this internal
+  profile identifier.
+
+support:
+  level: unavailable
+  reason: >
+    Milestone 4 narrows support to one verified baseline profile instead of
+    implying broader app-specific coverage.
 
 base_image: ubuntu-24.04
 image_policy:
@@ -11,28 +22,79 @@ image_policy:
   allowed:
     - ubuntu-24.04
 
-services:
-  - nginx
-  - php-fpm
-  - redis-server
-  - rabbitmq-server
-
-hardening:
-  fail2ban: enabled
-  ufw: baseline
-  automatic_security_updates: enabled
-
-performance:
-  php_worker_model: dynamic
-  opcache: aggressive
-  object_cache: redis
-
-hooks:
-  - bootstrap
-  - harden
-  - configure
-  - verify
+baseline:
+  package_update: dist
+  packages:
+    - ca-certificates
+    - curl
+    - fail2ban
+    - gnupg
+    - openssh-server
+    - python3
+    - python3-apt
+    - rsync
+    - ufw
+    - unattended-upgrades
+  directories:
+    - path: /etc/pressluft
+      owner: root
+      group: root
+      mode: "0755"
+    - path: /var/lib/pressluft
+      owner: pressluft
+      group: pressluft
+      mode: "0755"
+  users:
+    - name: pressluft
+      group: pressluft
+      home: /var/lib/pressluft
+      shell: /usr/sbin/nologin
+      system: true
+  firewall:
+    enabled: true
+    default_incoming: deny
+    default_outgoing: allow
+    allowed_tcp_ports:
+      - 22
+      - 80
+      - 443
+  verification:
+    services:
+      - name: fail2ban
+        state: started
+      - name: ssh
+        state: started
+      - name: pressluft-agent
+        state: started
+    files:
+      - path: /etc/pressluft/agent.yaml
+      - path: /etc/pressluft/profile-contract.yaml
+      - path: /etc/systemd/system/pressluft-agent.service
+    listeners:
+      - name: ssh
+        host: 127.0.0.1
+        port: 22
+        state: started
+    health_checks:
+      - name: blocked-selection
+        command: /usr/bin/true
 
 artifacts:
   playbook: ansible/playbooks/configure.yml
   role: woocommerce-optimized
+  loading_model: dynamic-include-role
+
+verification:
+  services:
+    - name: nginx
+      state: started
+  files:
+    - path: /etc/nginx/nginx.conf
+  listeners:
+    - name: nginx-http
+      host: 127.0.0.1
+      port: 80
+      state: started
+  health_checks:
+    - name: blocked-selection
+      command: /usr/bin/true

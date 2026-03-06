@@ -97,6 +97,15 @@ export interface CreateServerResponse {
   status: string
 }
 
+export interface DeleteServerResponse {
+  server_id: number
+  job_id: number
+  status: string
+  job_status: string
+  async: boolean
+  description: string
+}
+
 export function useServers() {
   const servers = ref<StoredServer[]>([])
   const profiles = ref<ServerProfile[]>([])
@@ -152,7 +161,7 @@ export function useServers() {
     }
   }
 
-  const deleteServer = async (serverId: number): Promise<void> => {
+  const deleteServer = async (serverId: number): Promise<DeleteServerResponse> => {
     error.value = ''
     const res = await fetch(`/api/servers/${serverId}`, {
       method: 'DELETE',
@@ -161,6 +170,7 @@ export function useServers() {
       const body = await res.json().catch(() => ({ error: res.statusText }))
       throw new Error(body.error || 'Failed to delete server')
     }
+    return await res.json() as DeleteServerResponse
   }
 
   const fetchServer = async (serverId: number): Promise<StoredServer> => {

@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"pressluft/internal/agent"
+	"pressluft/internal/platform"
 )
 
 var (
@@ -22,6 +23,14 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
+	slog.SetDefault(logger)
+
+	executionMode, err := platform.NormalizeAgentExecutionMode(os.Getenv("PRESSLUFT_EXECUTION_MODE"), isDevBuild())
+	if err != nil {
+		logger.Error("failed to resolve execution mode", "error", err)
+		os.Exit(1)
+	}
+	logExecutionMode(logger, executionMode)
 
 	cfg, err := agent.LoadConfig(*configPath)
 	if err != nil {
@@ -53,5 +62,21 @@ func main() {
 	if err := agent.Run(ctx); err != nil && err != context.Canceled {
 		logger.Error("agent error", "error", err)
 		os.Exit(1)
+	}
+}
+
+func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
+	logger.Info("platform contract loaded",
+		"execution_mode", mode,
+		"contract_ref", "README.md#platform-contract",
+		"lifecycle_note", "docs/internal/lifecycle-state-semantics.md",
+		"glossary", "docs/glossary.md",
+	)
+
+	switch mode {
+	case platform.ExecutionModeDev:
+		logger.Info("development agent transport enabled", "agent_trust", "dev websocket token")
+	case platform.ExecutionModeProductionBootstrap:
+		logger.Warn("production bootstrap path requires control plane TLS and mTLS trust material", "agent_transport", "wss plus mTLS", "status", "experimental")
 	}
 }

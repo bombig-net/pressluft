@@ -103,7 +103,7 @@ export function useJobs() {
     }
 
     const isTerminalStatus = (status: string) =>
-      ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(status)
+      ['succeeded', 'failed'].includes(status)
 
     // Start polling fallback
     const startPolling = () => {

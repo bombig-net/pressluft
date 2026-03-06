@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
@@ -54,6 +55,10 @@ func Open(dbPath string, logger *slog.Logger) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
+	if err := reconcileLegacySchema(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("reconcile legacy schema: %w", err)
+	}
 
 	return &DB{DB: sqlDB}, nil
 }
@@ -95,6 +100,61 @@ func runMigrations(db *sql.DB, logger *slog.Logger) error {
 
 	for _, r := range results {
 		logger.Info("migration applied", "path", r.Source.Path, "duration", r.Duration)
+	}
+	return nil
+}
+
+func reconcileLegacySchema(db *sql.DB) error {
+	if err := ensureJobsColumns(db, []string{
+		"payload TEXT",
+		"command_id TEXT",
+		"started_at TEXT",
+		"finished_at TEXT",
+		"timeout_at TEXT",
+	}); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_command_id ON jobs(command_id) WHERE command_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("ensure jobs command_id index: %w", err)
+	}
+	return nil
+}
+
+func ensureJobsColumns(db *sql.DB, definitions []string) error {
+	rows, err := db.Query(`PRAGMA table_info(jobs)`)
+	if err != nil {
+		return fmt.Errorf("inspect jobs schema: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan jobs schema: %w", err)
+		}
+		existing[strings.ToLower(name)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate jobs schema: %w", err)
+	}
+
+	for _, definition := range definitions {
+		parts := strings.Fields(definition)
+		if len(parts) == 0 {
+			continue
+		}
+		name := strings.ToLower(parts[0])
+		if _, ok := existing[name]; ok {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN ` + definition); err != nil {
+			return fmt.Errorf("add jobs.%s: %w", name, err)
+		}
+		existing[name] = struct{}{}
 	}
 	return nil
 }

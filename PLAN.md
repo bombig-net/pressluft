@@ -294,6 +294,13 @@ Every server action shown in the UI and API corresponds to the real infrastructu
 
 - No destructive server action lies about what happened.
 
+### What is now true
+
+- Server deletion is orchestration-backed instead of directly deleting the database row.
+- Delete, rebuild, and resize now use explicit in-progress server statuses and block duplicate destructive workflows.
+- A successful delete leaves a durable `deleted` tombstone; failures leave an operator-visible `failed` state instead of implying success.
+- UI and API responses describe delete/rebuild/resize as asynchronous jobs rather than synchronous completion.
+
 ---
 
 ## Milestone 3 - Simplify and Harden the Job Model
@@ -362,6 +369,13 @@ The orchestrator exposes only states and recovery behavior that the worker actua
 ### Exit check
 
 - The job model stops pretending to support states the runtime cannot honor.
+
+### What is now true
+
+- Jobs now use only `queued`, `running`, `succeeded`, and `failed` as durable states.
+- Worker interruption and timeout handling are explicit: in-flight jobs fail with a durable recovery reason instead of being silently requeued.
+- Automatic retries are disabled for all current job kinds; recovery is manual and documented per kind.
+- `job_steps` and `job_checkpoints` are removed from the live schema, and the job timeline is the only step-history source of truth.
 
 ---
 
@@ -443,6 +457,13 @@ Profiles stop being metadata and become actual, verified convergence targets.
 
 - At least one profile is real enough to trust as a future site-hosting base.
 
+### What is now true
+
+- `configure.yml` now loads profile artifacts, applies the common baseline, dynamically includes the selected profile role, flushes handlers, and runs post-config verification before success.
+- `nginx-stack` is the one fully supported baseline profile; `openlitespeed-stack` and `woocommerce-optimized` are explicitly unavailable instead of implying unsupported breadth.
+- Registry keys, profile artifacts, and the profile schema are validated together, and profile schema checks use the named Draft 2020-12-compatible `santhosh-tekuri/jsonschema` validator.
+- `ready` is now gated on verification passing for supported profile convergence rather than agent deployment alone.
+
 ---
 
 ## Milestone 5 - Harden Agent Commands and Node Status
@@ -513,6 +534,13 @@ The agent command channel is safe, validated, and accurately reflected in durabl
 
 - A connected node is durably represented as healthy, and bad commands fail safely.
 
+### What is now true
+
+- Agent commands now share one validation contract across API submission, dispatch, and on-node execution.
+- Restart targets are constrained by both service-name format rules and an explicit allowlist for the supported baseline services.
+- Websocket connect, heartbeat, disconnect degradation, and stale-node expiry now persist durable `online`, `unhealthy`, and `offline` status transitions.
+- Runtime websocket and command serialization paths no longer rely on panic-based `mustMarshal` helpers.
+
 ---
 
 ## Milestone 6 - Observability, Cleanup, and Runtime Hygiene
@@ -563,6 +591,12 @@ The platform is easier to reason about, support, and extend.
 ### Exit check
 
 - A new contributor can understand current support boundaries without reading half the codebase.
+
+### What is now true
+
+- Runtime logs now use consistent `server_id`, `job_id`, and `command_id` correlation fields across websocket sessions, command dispatch/results, agent bootstrap, and key job lifecycle paths.
+- Dead runtime surface was reduced: the unused `internal/agentproto` package is gone, the stale `internal/dispatch/dispatcher.go` reference is now explicitly historical, and the direct `ServerStore.Delete` helper no longer implies a bypass around orchestration-backed deletion.
+- README and `web/README.md` now document the real support boundaries, the live dispatch flow, and the full set of control-plane and agent-side configuration inputs that the current binaries read.
 
 ---
 

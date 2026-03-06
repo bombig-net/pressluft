@@ -50,7 +50,7 @@ const stepLabels: Record<string, string> = {
 const stepOrderByKind: Record<string, string[]> = {
   provision: ["validate", "provision", "configure", "finalize"],
   delete: ["validate", "delete", "finalize"],
-  rebuild: ["validate", "rebuild", "finalize"],
+  rebuild: ["validate", "rebuild", "configure", "finalize"],
   resize: ["validate", "resize", "finalize"],
   update_firewalls: ["validate", "update_firewalls", "finalize"],
   manage_volume: ["validate", "manage_volume", "finalize"],
@@ -163,7 +163,7 @@ const jobStartedAt = computed(() => {
 
 const isTerminal = computed(() => {
   const status = activeJob.value?.status
-  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out"
+  return status === "succeeded" || status === "failed"
 })
 
 // Format timestamp to readable time
@@ -184,12 +184,9 @@ function statusBadgeClass(status: string) {
     case "succeeded":
       return "border-primary/30 bg-primary/10 text-primary"
     case "running":
-    case "preparing":
     case "queued":
       return "border-accent/30 bg-accent/10 text-accent"
     case "failed":
-    case "cancelled":
-    case "timed_out":
       return "border-destructive/30 bg-destructive/10 text-destructive"
     default:
       return "border-border/60 bg-muted/60 text-foreground"
@@ -207,7 +204,7 @@ watch(
 
     if (status === "succeeded") {
       emit("completed", activeJob.value)
-    } else if (status === "failed" || status === "cancelled" || status === "timed_out") {
+    } else if (status === "failed") {
       emit("failed", activeJob.value, activeJob.value.last_error || "Unknown error")
     }
   },
@@ -216,7 +213,7 @@ watch(
 // Handle event updates to refresh job status
 function handleEvent(event: JobEvent) {
   // Refresh job when we get terminal events
-  if (event.event_type === "job_completed" || event.event_type === "job_failed") {
+  if (event.event_type === "job_succeeded" || event.event_type === "job_failed" || event.event_type === "job_timed_out" || event.event_type === "job_recovered") {
     fetchJob(props.jobId).catch(() => {})
   }
 }
@@ -240,7 +237,7 @@ async function retryLoad() {
     const job = await fetchJob(props.jobId)
 
     // Check if job is already in terminal state (historical view)
-    const terminalStatuses = ["succeeded", "failed", "cancelled", "timed_out"]
+    const terminalStatuses = ["succeeded", "failed"]
     if (terminalStatuses.includes(job.status)) {
       isHistoricalView.value = true
       await fetchJobEvents(props.jobId)
@@ -264,7 +261,7 @@ onMounted(async () => {
     const job = await fetchJob(props.jobId)
 
     // Check if job is already in terminal state (historical view)
-    const terminalStatuses = ["succeeded", "failed", "cancelled", "timed_out"]
+    const terminalStatuses = ["succeeded", "failed"]
     if (terminalStatuses.includes(job.status)) {
       // Historical view: fetch all events at once, no streaming
       isHistoricalView.value = true
@@ -404,8 +401,7 @@ onUnmounted(() => {
               :class="cn(
                 {
                   'bg-muted text-muted-foreground': step.status === 'pending',
-                  'bg-primary/20 text-primary': step.status === 'running',
-                  'bg-primary/20 text-primary': step.status === 'completed',
+                  'bg-primary/20 text-primary': step.status === 'running' || step.status === 'completed',
                   'bg-destructive/20 text-destructive': step.status === 'failed',
                 },
                 !isHistoricalView && 'transition-all duration-300',

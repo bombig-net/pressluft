@@ -3,8 +3,13 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"pressluft/internal/orchestrator"
+	"pressluft/internal/platform"
 
 	_ "modernc.org/sqlite"
 )
@@ -101,6 +106,134 @@ func TestServerStoreUpdateProvisioning(t *testing.T) {
 	}
 }
 
+func TestServerStoreQueueServerJobUpdatesLifecycleStatus(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewServerStore(db)
+	providerID := mustInsertProvider(t, db, "hetzner", "main")
+
+	serverID, err := store.Create(context.Background(), CreateServerNodeInput{
+		ProviderID:   providerID,
+		ProviderType: "hetzner",
+		Name:         "agency-delete-01",
+		Location:     "fsn1",
+		ServerType:   "cx22",
+		Image:        "ubuntu-24.04",
+		ProfileKey:   "nginx-stack",
+		Status:       string(platform.ServerStatusReady),
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	server, job, err := store.QueueServerJob(context.Background(), QueueServerJobInput{
+		ServerID: serverID,
+		Kind:     string(orchestrator.JobKindDeleteServer),
+	})
+	if err != nil {
+		t.Fatalf("queue server job: %v", err)
+	}
+	if server.Status != string(platform.ServerStatusDeleting) {
+		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusDeleting)
+	}
+	if job.Status != orchestrator.JobStatusQueued {
+		t.Fatalf("job status = %q, want %q", job.Status, orchestrator.JobStatusQueued)
+	}
+}
+
+func TestServerStoreQueueServerJobBlocksDuplicateDestructiveActions(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewServerStore(db)
+	serverID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusReady))
+
+	if _, _, err := store.QueueServerJob(context.Background(), QueueServerJobInput{
+		ServerID: serverID,
+		Kind:     string(orchestrator.JobKindRebuildServer),
+	}); err != nil {
+		t.Fatalf("queue first destructive job: %v", err)
+	}
+
+	_, _, err := store.QueueServerJob(context.Background(), QueueServerJobInput{
+		ServerID: serverID,
+		Kind:     string(orchestrator.JobKindResizeServer),
+	})
+	if !errors.Is(err, ErrServerActionConflict) {
+		t.Fatalf("err = %v, want ErrServerActionConflict", err)
+	}
+}
+
+func TestServerStoreQueueServerJobRejectsDeletedServers(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewServerStore(db)
+	serverID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusDeleted))
+
+	_, _, err := store.QueueServerJob(context.Background(), QueueServerJobInput{
+		ServerID: serverID,
+		Kind:     string(orchestrator.JobKindRestartService),
+		Payload:  `{"service_name":"nginx"}`,
+	})
+	if !errors.Is(err, ErrServerDeleted) {
+		t.Fatalf("err = %v, want ErrServerDeleted", err)
+	}
+}
+
+func TestServerStoreUpdateNodeStatusPersistsOnlineHeartbeat(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewServerStore(db)
+	serverID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusReady))
+	lastSeen := time.Now().UTC().Format(time.RFC3339)
+
+	if err := store.UpdateNodeStatus(context.Background(), serverID, "online", lastSeen, "1.2.3"); err != nil {
+		t.Fatalf("update node status: %v", err)
+	}
+
+	server, err := store.GetByID(context.Background(), serverID)
+	if err != nil {
+		t.Fatalf("get server: %v", err)
+	}
+	if server.NodeStatus != "online" || server.NodeLastSeen != lastSeen || server.NodeVersion != "1.2.3" {
+		t.Fatalf("server node state = %+v, want persisted online heartbeat", server)
+	}
+}
+
+func TestServerStoreMarkNodesOfflineBeforeOnlyUpdatesStaleNodes(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewServerStore(db)
+	staleID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusReady))
+	freshID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusReady))
+
+	staleLastSeen := time.Now().Add(-4 * time.Minute).UTC().Format(time.RFC3339)
+	freshLastSeen := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
+	if err := store.UpdateNodeStatus(context.Background(), staleID, "unhealthy", staleLastSeen, "v1"); err != nil {
+		t.Fatalf("seed stale node: %v", err)
+	}
+	if err := store.UpdateNodeStatus(context.Background(), freshID, "online", freshLastSeen, "v2"); err != nil {
+		t.Fatalf("seed fresh node: %v", err)
+	}
+
+	rows, err := store.MarkNodesOfflineBefore(context.Background(), time.Now().Add(-150*time.Second))
+	if err != nil {
+		t.Fatalf("mark nodes offline: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("rows = %d, want 1", rows)
+	}
+
+	staleServer, err := store.GetByID(context.Background(), staleID)
+	if err != nil {
+		t.Fatalf("get stale server: %v", err)
+	}
+	freshServer, err := store.GetByID(context.Background(), freshID)
+	if err != nil {
+		t.Fatalf("get fresh server: %v", err)
+	}
+	if staleServer.NodeStatus != "offline" {
+		t.Fatalf("stale status = %q, want offline", staleServer.NodeStatus)
+	}
+	if freshServer.NodeStatus != "online" {
+		t.Fatalf("fresh status = %q, want online", freshServer.NodeStatus)
+	}
+}
+
 func mustOpenTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -171,6 +304,41 @@ func mustOpenTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("create server_keys table: %v", err)
 	}
 
+	if _, err := db.Exec(`
+		CREATE TABLE jobs (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			server_id    INTEGER,
+			kind         TEXT    NOT NULL,
+			status       TEXT    NOT NULL,
+			current_step TEXT    NOT NULL DEFAULT '',
+			retry_count  INTEGER NOT NULL DEFAULT 0,
+			last_error   TEXT,
+			payload      TEXT,
+			started_at   TEXT,
+			finished_at  TEXT,
+			timeout_at   TEXT,
+			command_id   TEXT,
+			created_at   TEXT    NOT NULL,
+			updated_at   TEXT    NOT NULL,
+			FOREIGN KEY (server_id) REFERENCES servers(id)
+		);
+		CREATE TABLE job_events (
+			job_id     INTEGER NOT NULL,
+			seq        INTEGER NOT NULL,
+			event_type TEXT    NOT NULL,
+			level      TEXT    NOT NULL,
+			step_key   TEXT,
+			status     TEXT,
+			message    TEXT    NOT NULL,
+			payload    TEXT,
+			created_at TEXT    NOT NULL,
+			PRIMARY KEY (job_id, seq),
+			FOREIGN KEY (job_id) REFERENCES jobs(id)
+		);
+	`); err != nil {
+		t.Fatalf("create jobs tables: %v", err)
+	}
+
 	return db
 }
 
@@ -193,5 +361,30 @@ func mustInsertProvider(t *testing.T, db *sql.DB, providerType, name string) int
 		t.Fatalf("provider insert id: %v", err)
 	}
 
+	return id
+}
+
+func mustInsertServerWithStatus(t *testing.T, db *sql.DB, status string) int64 {
+	t.Helper()
+	providerID := mustInsertProvider(t, db, "hetzner", "secondary")
+	res, err := db.Exec(
+		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		providerID,
+		"hetzner",
+		"server-under-test",
+		"fsn1",
+		"cx22",
+		"ubuntu-24.04",
+		"nginx-stack",
+		status,
+	)
+	if err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("server insert id: %v", err)
+	}
 	return id
 }

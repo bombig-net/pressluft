@@ -90,7 +90,7 @@ const loadServices = async () => {
   }
 }
 
-const terminalStatuses = new Set(['succeeded', 'failed', 'cancelled', 'timed_out'])
+const terminalStatuses = new Set(['succeeded', 'failed'])
 
 const setServiceAction = (serviceName: string, next: Partial<ServiceActionState>) => {
   const current = serviceActions[serviceName] || { status: 'idle', message: '' }
@@ -120,11 +120,7 @@ const monitorServiceJob = (serviceName: string, jobId: number) => {
 
         const errorMessage = job.last_error
           ? `Failed: ${job.last_error}`
-          : job.status === 'cancelled'
-            ? 'Restart cancelled'
-            : job.status === 'timed_out'
-              ? 'Restart timed out'
-              : 'Restart failed'
+          : 'Restart failed'
 
         setServiceAction(serviceName, { status: 'failed', message: errorMessage, jobId })
         return
@@ -198,9 +194,21 @@ const selectSection = (key: string) => {
 const statusVariant = (status: string): 'success' | 'warning' | 'danger' | 'default' => {
   if (status === 'ready') return 'success'
   if (status === 'failed') return 'danger'
-  if (status === 'provisioning' || status === 'pending') return 'warning'
+  if (['pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(status)) return 'warning'
   return 'default'
 }
+
+const serverIsDeleted = computed(() => server.value?.status === 'deleted')
+const serverBlocksMutations = computed(() => ['deleting', 'deleted'].includes(server.value?.status || ''))
+const destructiveActionInProgress = computed(() => ['rebuilding', 'resizing', 'deleting'].includes(server.value?.status || ''))
+const settingsDisabled = computed(() => serverBlocksMutations.value || destructiveActionInProgress.value)
+const settingsBlockedReason = computed(() => {
+  if (server.value?.status === 'deleting') return 'This server is deleting. New actions are blocked until deletion succeeds or fails.'
+  if (server.value?.status === 'deleted') return 'This server is deleted. The record is retained only as a tombstone.'
+  if (server.value?.status === 'rebuilding') return 'A rebuild job is already in progress.'
+  if (server.value?.status === 'resizing') return 'A resize job is already in progress.'
+  return ''
+})
 
 const rebuildServerImage = ref("")
 const resizeServerType = ref("")
@@ -265,7 +273,8 @@ const submitRebuild = async () => {
         server_image: serverImage,
       },
     })
-    rebuildState.success = `Job #${job.id} created`
+    rebuildState.success = `Rebuild job #${job.id} queued`
+    server.value = await fetchServer(serverId.value)
   } catch (e: any) {
     rebuildState.error = e.message || "Failed to create rebuild job"
   } finally {
@@ -291,7 +300,8 @@ const submitResize = async () => {
         upgrade_disk: resizeUpgradeDisk.value,
       },
     })
-    resizeState.success = `Job #${job.id} created`
+    resizeState.success = `Resize job #${job.id} queued`
+    server.value = await fetchServer(serverId.value)
   } catch (e: any) {
     resizeState.error = e.message || "Failed to create resize job"
   } finally {
@@ -376,8 +386,9 @@ watch(imageOptions, (options) => {
   if (!rebuildServerImage.value && server.value?.image) {
     rebuildServerImage.value = server.value.image
   }
-  if (options.length && !options.some((option) => option.value === rebuildServerImage.value)) {
-    rebuildServerImage.value = options[0].value
+  const firstOption = options[0]
+  if (firstOption && !options.some((option) => option.value === rebuildServerImage.value)) {
+    rebuildServerImage.value = firstOption.value
   }
 })
 
@@ -385,14 +396,16 @@ watch(serverTypeOptions, (options) => {
   if (!resizeServerType.value && server.value?.server_type) {
     resizeServerType.value = server.value.server_type
   }
-  if (options.length && !options.some((option) => option.value === resizeServerType.value)) {
-    resizeServerType.value = options[0].value
+  const firstOption = options[0]
+  if (firstOption && !options.some((option) => option.value === resizeServerType.value)) {
+    resizeServerType.value = firstOption.value
   }
 })
 
 watch(volumeOptions, (options) => {
-  if (!volumeName.value && options.length) {
-    volumeName.value = options[0].value
+  const firstOption = options[0]
+  if (!volumeName.value && firstOption) {
+    volumeName.value = firstOption.value
   }
 })
 
@@ -422,6 +435,11 @@ const formatDate = (iso: string): string => {
   }
 }
 
+const refreshServer = async () => {
+  if (!serverId.value) return
+  server.value = await fetchServer(serverId.value)
+}
+
 onMounted(async () => {
   if (!serverId.value) {
     error.value = 'Invalid server ID'
@@ -430,7 +448,7 @@ onMounted(async () => {
   }
 
   try {
-    server.value = await fetchServer(serverId.value)
+    await refreshServer()
     await fetchServerOptions(serverId.value)
     // Start agent status polling if server is ready
     if (server.value?.status === 'ready') {
@@ -669,8 +687,8 @@ onUnmounted(() => {
                         :class="{
                           'bg-primary': server.status === 'ready',
                           'bg-destructive': server.status === 'failed',
-                          'bg-accent animate-pulse': server.status === 'provisioning' || server.status === 'pending',
-                          'bg-muted-foreground': !['ready', 'failed', 'provisioning', 'pending'].includes(server.status),
+                          'bg-accent animate-pulse': ['pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(server.status),
+                          'bg-muted-foreground': !['ready', 'failed', 'pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(server.status),
                         }"
                       />
                       <span class="text-sm font-medium text-foreground/80 capitalize">{{ server.status }}</span>
@@ -699,10 +717,17 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Provider Server ID (if available) -->
-                <div v-if="server.provider_server_id" class="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
-                  <p class="text-xs font-medium text-muted-foreground">Provider Server ID</p>
-                  <p class="mt-1 font-mono text-sm text-foreground/80">{{ server.provider_server_id }}</p>
-                </div>
+                  <div v-if="server.provider_server_id" class="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
+                    <p class="text-xs font-medium text-muted-foreground">Provider Server ID</p>
+                    <p class="mt-1 font-mono text-sm text-foreground/80">{{ server.provider_server_id }}</p>
+                  </div>
+
+                  <div v-if="server.status === 'deleting'" class="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent">
+                    Deletion is in progress asynchronously. The record stays visible until provider-side removal finishes and the server becomes a tombstone.
+                  </div>
+                  <div v-else-if="serverIsDeleted" class="rounded-lg border border-border/60 bg-muted/60 px-4 py-3 text-sm text-muted-foreground">
+                    This server has been deleted. Pressluft keeps this record as a tombstone for audit history.
+                  </div>
 
                 <!-- Agent Metrics (only show when server is ready) -->
                 <template v-if="server.status === 'ready'">
@@ -865,7 +890,7 @@ onUnmounted(() => {
                             'text-muted-foreground': serviceActions[service.name]?.status !== 'failed' && serviceActions[service.name]?.status !== 'succeeded',
                           }"
                         >
-                          {{ serviceActions[service.name].message }}
+                          {{ serviceActions[service.name]?.message }}
                         </p>
                       </div>
                       <Button
@@ -907,6 +932,9 @@ onUnmounted(() => {
 
               <!-- Settings -->
               <div v-if="activeSection === 'settings'" class="space-y-4">
+                <div v-if="settingsBlockedReason" class="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-accent">
+                  {{ settingsBlockedReason }}
+                </div>
                 <!-- Execution mode indicator -->
                 <div class="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-3 py-2">
                   <span
@@ -957,9 +985,9 @@ onUnmounted(() => {
                         <Button
                           type="submit"
                           size="sm"
-                          :disabled="rebuildState.loading || (!rebuildServerImage && !imageOptions.length)"
+                          :disabled="settingsDisabled || rebuildState.loading || (!rebuildServerImage && !imageOptions.length)"
                         >
-                          Create rebuild job
+                          Queue rebuild job
                         </Button>
                         <span v-if="rebuildState.loading" class="text-xs text-muted-foreground">Submitting...</span>
                         <span v-if="rebuildState.success" class="text-xs text-primary">{{ rebuildState.success }}</span>
@@ -1015,9 +1043,9 @@ onUnmounted(() => {
                       </div>
                       <p v-if="optionsError" class="text-xs text-destructive">{{ optionsError }}</p>
                       <div class="flex flex-wrap items-center gap-3">
-                        <Button type="submit" size="sm" :disabled="resizeState.loading || !serverTypeOptions.length">
-                          Create resize job
-                        </Button>
+                          <Button type="submit" size="sm" :disabled="settingsDisabled || resizeState.loading || !serverTypeOptions.length">
+                           Queue resize job
+                          </Button>
                         <span v-if="resizeState.loading" class="text-xs text-muted-foreground">Submitting...</span>
                         <span v-if="resizeState.success" class="text-xs text-primary">{{ resizeState.success }}</span>
                         <span v-if="resizeState.error" class="text-xs text-destructive">{{ resizeState.error }}</span>
@@ -1067,7 +1095,7 @@ onUnmounted(() => {
                       <p v-if="optionsLoading" class="text-xs text-muted-foreground">Loading firewalls...</p>
                       <p v-if="optionsError" class="text-xs text-destructive">{{ optionsError }}</p>
                       <div class="flex flex-wrap items-center gap-3">
-                        <Button type="submit" size="sm" :disabled="firewallsState.loading">
+                        <Button type="submit" size="sm" :disabled="settingsDisabled || firewallsState.loading">
                           Create firewall update job
                         </Button>
                         <span v-if="firewallsState.loading" class="text-xs text-muted-foreground">Submitting...</span>
@@ -1159,7 +1187,7 @@ onUnmounted(() => {
                       <p v-if="optionsLoading" class="text-xs text-muted-foreground">Loading volume options...</p>
                       <p v-if="optionsError" class="text-xs text-destructive">{{ optionsError }}</p>
                       <div class="flex flex-wrap items-center gap-3">
-                        <Button type="submit" size="sm" :disabled="volumeStateUi.loading">
+                        <Button type="submit" size="sm" :disabled="settingsDisabled || volumeStateUi.loading">
                           Create volume job
                         </Button>
                         <span v-if="volumeStateUi.loading" class="text-xs text-muted-foreground">Submitting...</span>

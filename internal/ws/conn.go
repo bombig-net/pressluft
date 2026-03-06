@@ -59,6 +59,9 @@ func (c *Conn) Receive(ctx context.Context) (Envelope, error) {
 }
 
 func (c *Conn) Close() error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
 	return c.conn.Close(websocket.StatusNormalClosure, "")
 }
 

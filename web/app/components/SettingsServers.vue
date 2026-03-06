@@ -46,6 +46,8 @@ const { getStatusType, isConnected } = useAllAgentStatus({ pollInterval: 15000 }
 // Delete confirmation state
 const deleteConfirmId = ref<number | null>(null)
 const deleting = ref(false)
+const deleteError = ref("")
+const deleteSuccess = ref("")
 
 const formStep = ref<"configure" | "review" | "provisioning">("configure")
 const formError = ref("")
@@ -290,29 +292,35 @@ const formatDate = (iso: string): string => {
 const statusBadgeClass = (status: string): string => {
   if (status === "ready") return "border-primary/30 bg-primary/10 text-primary"
   if (status === "failed") return "border-destructive/30 bg-destructive/10 text-destructive"
-  if (status === "provisioning" || status === "pending") {
+  if (["pending", "provisioning", "configuring", "rebuilding", "resizing", "deleting"].includes(status)) {
     return "border-accent/30 bg-accent/10 text-accent"
   }
+  if (status === "deleted") return "border-border/60 bg-muted/60 text-muted-foreground"
   return "border-border/60 bg-muted/60 text-foreground"
 }
 
 const confirmDelete = (serverId: number) => {
+	deleteError.value = ""
+	deleteSuccess.value = ""
   deleteConfirmId.value = serverId
 }
 
 const cancelDelete = () => {
   deleteConfirmId.value = null
+  deleteError.value = ""
 }
 
 const executeDelete = async (serverId: number) => {
   deleting.value = true
+  deleteError.value = ""
+  deleteSuccess.value = ""
   try {
-    await deleteServer(serverId)
+    const result = await deleteServer(serverId)
+    deleteSuccess.value = `Delete job #${result.job_id} queued`
     deleteConfirmId.value = null
     await fetchServers()
   } catch (e: any) {
-    // Could show a toast here
-    console.error("Failed to delete server:", e.message)
+    deleteError.value = e.message || "Failed to queue delete job"
   } finally {
     deleting.value = false
   }
@@ -357,9 +365,9 @@ const handleDialogUpdate = (value: boolean) => {
     </div>
 
     <div v-else class="space-y-3">
-      <div
-        v-for="server in servers"
-        :key="server.id"
+        <div
+          v-for="server in servers"
+          :key="server.id"
         class="group flex items-center justify-between rounded-lg border border-border/60 bg-card/30 px-4 py-3 transition-colors hover:border-border/80 hover:bg-card/50"
       >
         <NuxtLink
@@ -399,6 +407,12 @@ const handleDialogUpdate = (value: boolean) => {
           <p class="text-xs text-muted-foreground">
             {{ server.location }} · {{ server.server_type }} · {{ server.profile_key }} · Added {{ formatDate(server.created_at) }}
           </p>
+          <p v-if="server.status === 'deleting'" class="mt-1 text-xs text-accent">
+            Deletion is queued and runs asynchronously until provider-side removal completes.
+          </p>
+          <p v-else-if="server.status === 'deleted'" class="mt-1 text-xs text-muted-foreground">
+            Tombstone record retained after provider-side deletion.
+          </p>
         </NuxtLink>
         <div class="flex items-center gap-3">
           <span class="text-xs text-muted-foreground">{{ server.provider_type }}</span>
@@ -411,8 +425,9 @@ const handleDialogUpdate = (value: boolean) => {
             :class="cn(
               buttonBaseClass,
               'text-muted-foreground hover:bg-destructive/10 hover:text-destructive',
-              server.status !== 'failed' && 'opacity-0 group-hover:opacity-100',
+              !['failed', 'ready'].includes(server.status) && 'opacity-0 group-hover:opacity-100',
             )"
+            :disabled="['deleting', 'deleted'].includes(server.status)"
             title="Delete server"
             @click.prevent="confirmDelete(server.id)"
           >
@@ -443,6 +458,8 @@ const handleDialogUpdate = (value: boolean) => {
           </div>
         </div>
       </div>
+      <p v-if="deleteSuccess" class="text-xs text-primary">{{ deleteSuccess }}</p>
+      <p v-if="deleteError" class="text-xs text-destructive">{{ deleteError }}</p>
     </div>
 
     <Dialog

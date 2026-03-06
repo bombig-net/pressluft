@@ -50,6 +50,10 @@ func (a *ServerStoreAdapter) UpdateServerType(ctx context.Context, id int64, ser
 	return a.store.UpdateServerType(ctx, id, serverType)
 }
 
+func (a *ServerStoreAdapter) UpdateImage(ctx context.Context, id int64, image string) error {
+	return a.store.UpdateImage(ctx, id, image)
+}
+
 func (a *ServerStoreAdapter) GetKey(ctx context.Context, serverID int64) (*StoredServerKey, error) {
 	key, err := a.store.GetKey(ctx, serverID)
 	if err != nil || key == nil {
