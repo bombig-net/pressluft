@@ -25,6 +25,7 @@ import { useProviders } from "~/composables/useProviders"
 import { useServers, type ServerTypePrice } from "~/composables/useServers"
 import { useAllAgentStatus } from "~/composables/useAgentStatus"
 import type { Job } from "~/composables/useJobs"
+import { parseHealthResponse } from "~/lib/api-runtime"
 import {
   inProgressServerStatuses,
   mutationBlockedServerStatuses,
@@ -149,7 +150,8 @@ const { apiFetch } = useApiClient()
 
 onMounted(async () => {
   await Promise.all([fetchProviders(), fetchServers()])
-  apiFetch<{ callback_url_mode?: string; callback_url_warning?: string }>('/health')
+  apiFetch('/health')
+    .then((payload) => parseHealthResponse(payload))
     .then((body) => {
       callbackMode.value = body.callback_url_mode || "unknown"
       callbackWarning.value = body.callback_url_warning || ""

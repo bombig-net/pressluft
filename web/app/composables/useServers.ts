@@ -1,38 +1,40 @@
 import { ref, readonly } from 'vue'
 import type {
   AgentInfo,
+  AgentStatusMapResponse,
+  CreateServerRequest,
   CreateServerResponse,
   DeleteServerResponse,
-  ServerCatalog,
-  ServerProfile,
+  ServerCatalogResponse,
   ServerTypePrice,
   ServicesResponse,
   StoredServer,
 } from '~/lib/api-contract'
 export type {
   AgentInfo,
-  ServerCatalog,
-  ServerProfile,
+  ServerCatalogResponse,
   ServerTypePrice,
   ServicesResponse,
   StoredServer,
 } from '~/lib/api-contract'
-
-export interface CreateServerInput {
-  provider_id: number
-  name: string
-  location: string
-  server_type: string
-  profile_key: string
-}
+import {
+  parseAgentInfo,
+  parseAgentStatusMapResponse,
+  parseCreateServerResponse,
+  parseDeleteServerResponse,
+  parseServerCatalogResponse,
+  parseServicesResponse,
+  parseStoredServer,
+  parseStoredServers,
+} from '~/lib/api-runtime'
 
 export type AgentStatusType = AgentInfo['status']
 
 export function useServers() {
   const { apiFetch } = useApiClient()
   const servers = ref<StoredServer[]>([])
-  const profiles = ref<ServerProfile[]>([])
-  const catalog = ref<ServerCatalog | null>(null)
+  const profiles = ref<ServerCatalogResponse['profiles']>([])
+  const catalog = ref<ServerCatalogResponse['catalog'] | null>(null)
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
@@ -41,7 +43,7 @@ export function useServers() {
     loading.value = true
     error.value = ''
     try {
-      servers.value = await apiFetch<StoredServer[]>('/servers')
+      servers.value = parseStoredServers(await apiFetch('/servers'))
     } catch (e: any) {
       error.value = e.message
     } finally {
@@ -53,21 +55,19 @@ export function useServers() {
     error.value = ''
     catalog.value = null
     profiles.value = []
-    const body = await apiFetch<{ catalog: ServerCatalog; profiles: ServerProfile[] }>(
-      `/servers/catalog?provider_id=${providerId}`,
-    )
+    const body = parseServerCatalogResponse(await apiFetch(`/servers/catalog?provider_id=${providerId}`))
     catalog.value = body.catalog
     profiles.value = body.profiles
   }
 
-  const createServer = async (payload: CreateServerInput): Promise<CreateServerResponse> => {
+  const createServer = async (payload: CreateServerRequest): Promise<CreateServerResponse> => {
     saving.value = true
     error.value = ''
     try {
-      return await apiFetch<CreateServerResponse>('/servers', {
+      return parseCreateServerResponse(await apiFetch('/servers', {
         method: 'POST',
         body: payload,
-      })
+      }))
     } finally {
       saving.value = false
     }
@@ -75,26 +75,26 @@ export function useServers() {
 
   const deleteServer = async (serverId: number): Promise<DeleteServerResponse> => {
     error.value = ''
-    return await apiFetch<DeleteServerResponse>(`/servers/${serverId}`, {
+    return parseDeleteServerResponse(await apiFetch(`/servers/${serverId}`, {
       method: 'DELETE',
-    })
+    }))
   }
 
   const fetchServer = async (serverId: number): Promise<StoredServer> => {
     error.value = ''
-    return await apiFetch<StoredServer>(`/servers/${serverId}`)
+    return parseStoredServer(await apiFetch(`/servers/${serverId}`))
   }
 
   const fetchAgentStatus = async (serverId: number): Promise<AgentInfo> => {
-    return await apiFetch<AgentInfo>(`/servers/${serverId}/agent-status`)
+    return parseAgentInfo(await apiFetch(`/servers/${serverId}/agent-status`))
   }
 
-  const fetchAllAgentStatus = async (): Promise<Record<number, AgentInfo>> => {
-    return await apiFetch<Record<number, AgentInfo>>('/servers/agents')
+  const fetchAllAgentStatus = async (): Promise<AgentStatusMapResponse> => {
+    return parseAgentStatusMapResponse(await apiFetch('/servers/agents'))
   }
 
   const fetchServices = async (serverId: number): Promise<ServicesResponse> => {
-    return await apiFetch<ServicesResponse>(`/servers/${serverId}/services`)
+    return parseServicesResponse(await apiFetch(`/servers/${serverId}/services`))
   }
 
   return {

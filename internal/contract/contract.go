@@ -41,17 +41,22 @@ type NodeThresholds struct {
 }
 
 type JobKindSpec struct {
-	Kind            string   `json:"kind"`
-	Label           string   `json:"label"`
-	AllowedStatuses []string `json:"allowed_statuses"`
-	Destructive     bool     `json:"destructive"`
-	Experimental    bool     `json:"experimental"`
-	ExecutionPath   string   `json:"execution_path"`
-	TimeoutSeconds  int64    `json:"timeout_seconds"`
-	RetryLimit      int      `json:"retry_limit"`
-	Recovery        string   `json:"recovery"`
-	QueuedStatus    string   `json:"queued_server_status,omitempty"`
-	Steps           []Step   `json:"steps"`
+	Kind            string         `json:"kind"`
+	Label           string         `json:"label"`
+	AllowedStatuses []string       `json:"allowed_statuses"`
+	Destructive     bool           `json:"destructive"`
+	Experimental    bool           `json:"experimental"`
+	ExecutionPath   string         `json:"execution_path"`
+	DispatchPolicy  DispatchPolicy `json:"dispatch_policy"`
+	TimeoutSeconds  int64          `json:"timeout_seconds"`
+	RetryLimit      int            `json:"retry_limit"`
+	Recovery        string         `json:"recovery"`
+	QueuedStatus    string         `json:"queued_server_status,omitempty"`
+	Steps           []Step         `json:"steps"`
+}
+
+type DispatchPolicy struct {
+	QueueServer bool `json:"queue_server"`
 }
 
 type Step struct {
@@ -149,6 +154,7 @@ func jobKindSpecs() []JobKindSpec {
 			Destructive:     spec.Destructive,
 			Experimental:    spec.Experimental,
 			ExecutionPath:   spec.ExecutionPath,
+			DispatchPolicy:  DispatchPolicy{QueueServer: spec.DispatchPolicy.QueueServer},
 			TimeoutSeconds:  int64(spec.Timeout / time.Second),
 			RetryLimit:      spec.RetryLimit,
 			Recovery:        spec.Recovery,

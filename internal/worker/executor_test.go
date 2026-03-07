@@ -13,8 +13,10 @@ import (
 
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/platform"
+	"pressluft/internal/provider"
 	"pressluft/internal/runner"
 	"pressluft/internal/security"
+	"pressluft/internal/server"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,10 +24,10 @@ import (
 func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
-	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
+	serverStore := &fakeServerStore{servers: map[int64]*server.StoredServer{
 		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: platform.ServerStatusDeleting},
 	}}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		DeletePlaybookPath: "delete.yml",
@@ -48,10 +50,10 @@ func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 func TestExecutorDeleteServerFailureLeavesRecoverableStatus(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
-	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
+	serverStore := &fakeServerStore{servers: map[int64]*server.StoredServer{
 		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: platform.ServerStatusDeleting},
 	}}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"delete.yml": errors.New("provider delete failed")}}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		DeletePlaybookPath: "delete.yml",
@@ -76,11 +78,11 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
 	serverStore := &fakeServerStore{
-		servers: map[int64]*StoredServer{
+		servers: map[int64]*server.StoredServer{
 			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "nginx-stack", Image: "ubuntu-22.04", IPv4: "203.0.113.10", Status: platform.ServerStatusRebuilding},
 		},
 	}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		RebuildPlaybookPath:   "rebuild.yml",
@@ -139,14 +141,14 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 	mustCreateTestAgentBinary(t)
 
 	serverStore := &fakeServerStore{
-		servers: map[int64]*StoredServer{
+		servers: map[int64]*server.StoredServer{
 			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "openlitespeed-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: platform.ServerStatusRebuilding},
 		},
-		keys: map[int64]*StoredServerKey{
+		keys: map[int64]*server.StoredServerKey{
 			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
 		},
 	}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		RebuildPlaybookPath:   "rebuild.yml",
@@ -176,10 +178,10 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 func TestExecutorResizeServerFailureMarksFailed(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
-	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
+	serverStore := &fakeServerStore{servers: map[int64]*server.StoredServer{
 		1: {ID: 1, ProviderID: 11, Name: "resize-me", ServerType: "cx22", Status: platform.ServerStatusResizing},
 	}}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"resize.yml": errors.New("provider resize failed")}}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		ResizePlaybookPath: "resize.yml",
@@ -220,14 +222,14 @@ func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
 	mustCreateTestAgentBinary(t)
 
 	serverStore := &fakeServerStore{
-		servers: map[int64]*StoredServer{
+		servers: map[int64]*server.StoredServer{
 			1: {ID: 1, ProviderID: 11, Name: "setup-me", ProfileKey: "nginx-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: platform.ServerStatusConfiguring, SetupState: platform.SetupStateRunning},
 		},
-		keys: map[int64]*StoredServerKey{
+		keys: map[int64]*server.StoredServerKey{
 			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
 		},
 	}
-	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"configure.yml": errors.New("configure failed")}}
 	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
 		ConfigurePlaybookPath: "configure.yml",
@@ -259,11 +261,11 @@ func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
 }
 
 type fakeServerStore struct {
-	servers map[int64]*StoredServer
-	keys    map[int64]*StoredServerKey
+	servers map[int64]*server.StoredServer
+	keys    map[int64]*server.StoredServerKey
 }
 
-func (s *fakeServerStore) GetByID(_ context.Context, id int64) (*StoredServer, error) {
+func (s *fakeServerStore) GetByID(_ context.Context, id int64) (*server.StoredServer, error) {
 	server, ok := s.servers[id]
 	if !ok {
 		return nil, errors.New("server not found")
@@ -302,7 +304,7 @@ func (s *fakeServerStore) UpdateImage(_ context.Context, id int64, image string)
 	return nil
 }
 
-func (s *fakeServerStore) GetKey(_ context.Context, serverID int64) (*StoredServerKey, error) {
+func (s *fakeServerStore) GetKey(_ context.Context, serverID int64) (*server.StoredServerKey, error) {
 	key, ok := s.keys[serverID]
 	if !ok {
 		return nil, nil
@@ -311,16 +313,16 @@ func (s *fakeServerStore) GetKey(_ context.Context, serverID int64) (*StoredServ
 	return &copy, nil
 }
 
-func (s *fakeServerStore) CreateKey(_ context.Context, in CreateServerKeyInput) error {
+func (s *fakeServerStore) CreateKey(_ context.Context, in server.CreateServerKeyInput) error {
 	if s.keys == nil {
-		s.keys = map[int64]*StoredServerKey{}
+		s.keys = map[int64]*server.StoredServerKey{}
 	}
-	s.keys[in.ServerID] = &StoredServerKey{ServerID: in.ServerID, PublicKey: in.PublicKey, PrivateKeyEncrypted: in.PrivateKeyEncrypted, EncryptionKeyID: in.EncryptionKeyID}
+	s.keys[in.ServerID] = &server.StoredServerKey{ServerID: in.ServerID, PublicKey: in.PublicKey, PrivateKeyEncrypted: in.PrivateKeyEncrypted, EncryptionKeyID: in.EncryptionKeyID}
 	return nil
 }
 
 type fakeProviderStore struct {
-	provider *StoredProvider
+	provider *provider.StoredProvider
 }
 
 type fakeDevTokenStore struct{}
@@ -329,7 +331,7 @@ func (fakeDevTokenStore) Create(serverID int64, expiresIn time.Duration) (string
 	return "dev-token", nil
 }
 
-func (s *fakeProviderStore) GetByID(context.Context, int64) (*StoredProvider, error) {
+func (s *fakeProviderStore) GetByID(context.Context, int64) (*provider.StoredProvider, error) {
 	return s.provider, nil
 }
 

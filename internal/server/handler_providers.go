@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"pressluft/internal/activity"
+	"pressluft/internal/apitypes"
 	"pressluft/internal/provider"
 )
 
@@ -62,20 +63,14 @@ func (ph *providerHandler) routeWithID(w http.ResponseWriter, r *http.Request) {
 
 // --- handlers ---------------------------------------------------------------
 
-type createProviderRequest struct {
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	APIToken string `json:"api_token"`
-}
-
 func (ph *providerHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
-	var req createProviderRequest
+	var req apitypes.CreateProviderRequest
 	if err := decodeJSONBody(w, r, defaultJSONBodyLimit, &req); err != nil {
 		return
 	}
 
-	if req.Type == "" || req.Name == "" || req.APIToken == "" {
-		respondError(w, http.StatusBadRequest, "type, name, and api_token are required")
+	if err := req.Validate(); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -117,9 +112,9 @@ func (ph *providerHandler) handleCreate(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]any{
-		"id":         id,
-		"validation": result,
+	respondJSON(w, http.StatusCreated, apitypes.CreateProviderResponse{
+		ID:         id,
+		Validation: *result,
 	})
 }
 
@@ -169,19 +164,18 @@ func (ph *providerHandler) handleDelete(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-type validateRequest struct {
-	Type     string `json:"type"`
-	APIToken string `json:"api_token"`
-}
-
 func (ph *providerHandler) handleValidate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req validateRequest
+	var req apitypes.ValidateProviderRequest
 	if err := decodeJSONBody(w, r, defaultJSONBodyLimit, &req); err != nil {
+		return
+	}
+	if err := req.Validate(); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

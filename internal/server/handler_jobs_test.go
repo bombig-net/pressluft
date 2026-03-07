@@ -217,6 +217,25 @@ func TestJobsCreatePayloadValidation(t *testing.T) {
 	}
 }
 
+func TestJobsCreateRejectsMissingKind(t *testing.T) {
+	db := mustOpenJobsHandlerDB(t)
+	handler := NewHandler(db)
+
+	body, _ := json.Marshal(map[string]any{"server_id": 1})
+	req := httptest.NewRequest(http.MethodPost, "/api/jobs", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", res.Code, http.StatusBadRequest, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "kind is required") {
+		t.Fatalf("body = %q, want kind validation error", res.Body.String())
+	}
+}
+
 func TestJobsCreateRejectsDuplicateDestructiveAction(t *testing.T) {
 	db := mustOpenJobsHandlerDB(t)
 	handler := NewHandler(db)

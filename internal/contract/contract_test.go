@@ -16,6 +16,7 @@ func TestRenderTypeScriptModuleExportsContractSurface(t *testing.T) {
 		"export const jobKindLabels: Record<JobKind, string>",
 		"export const jobKindSteps: Record<JobKind, readonly WorkflowStep[]>",
 		"export const jobTerminalStatuses: readonly JobTerminalStatus[] = ",
+		"dispatch_policy",
 	} {
 		if !strings.Contains(rendered, needle) {
 			t.Fatalf("RenderTypeScriptModule() missing %q", needle)
@@ -40,6 +41,18 @@ func TestJobKindsIncludeWorkflowSteps(t *testing.T) {
 		}
 		if jobKind.Steps[0].Key != "validate" {
 			t.Fatalf("job kind %q should begin with validate step, got %#v", jobKind.Kind, jobKind.Steps)
+		}
+	}
+}
+
+func TestJobKindsExposeDispatchPolicy(t *testing.T) {
+	spec := SpecData()
+	for _, jobKind := range spec.JobKinds {
+		if jobKind.ExecutionPath == "" {
+			t.Fatalf("job kind %q missing execution path", jobKind.Kind)
+		}
+		if jobKind.Destructive && !jobKind.DispatchPolicy.QueueServer && jobKind.Kind != "configure_server" && jobKind.Kind != "provision_server" {
+			t.Fatalf("job kind %q should declare queue-backed dispatch policy", jobKind.Kind)
 		}
 	}
 }

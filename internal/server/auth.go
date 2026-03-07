@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"pressluft/internal/activity"
+	"pressluft/internal/apitypes"
 	"pressluft/internal/auth"
 )
 
@@ -18,11 +18,6 @@ type authHandler struct {
 	service       *auth.Service
 	activityStore *activity.Store
 	logger        *slog.Logger
-}
-
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
 }
 
 func (h *authHandler) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -39,13 +34,12 @@ func (h *authHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req loginRequest
+	var req apitypes.LoginRequest
 	if err := decodeJSONBody(w, r, defaultJSONBodyLimit, &req); err != nil {
 		return
 	}
-	req.Email = strings.TrimSpace(req.Email)
-	if req.Email == "" || strings.TrimSpace(req.Password) == "" {
-		respondError(w, http.StatusBadRequest, "email and password are required")
+	if err := req.Validate(); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -88,7 +82,7 @@ func (h *authHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		h.emitSecurityActivity(r, activity.EventSecurityLogout, activity.ActorUser, actor.ID, fmt.Sprintf("User %s logged out", actor.Email), false)
 		h.emitSecurityActivity(r, activity.EventSecuritySessionRevoked, activity.ActorUser, actor.ID, fmt.Sprintf("Session revoked for %s", actor.Email), false)
 	}
-	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	respondJSON(w, http.StatusOK, apitypes.StatusResponse{Status: "ok"})
 }
 
 func (h *authHandler) emitSecurityActivity(r *http.Request, event activity.EventType, actorType activity.ActorType, actorID, title string, attention bool) {

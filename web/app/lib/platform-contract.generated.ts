@@ -88,6 +88,9 @@ export const platformContract = {
       "destructive": false,
       "experimental": false,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": false
+      },
       "timeout_seconds": 1800,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; retry setup manually after inspection",
@@ -118,6 +121,9 @@ export const platformContract = {
       "destructive": true,
       "experimental": true,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 1200,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; verify provider-side deletion before retrying manually",
@@ -149,6 +155,9 @@ export const platformContract = {
       "destructive": false,
       "experimental": true,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 1200,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; retry manually after inspection",
@@ -179,6 +188,9 @@ export const platformContract = {
       "destructive": false,
       "experimental": false,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": false
+      },
       "timeout_seconds": 1800,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; inspect provider state before retrying manually",
@@ -205,6 +217,9 @@ export const platformContract = {
       "destructive": true,
       "experimental": true,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 2700,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; inspect machine state before retrying manually",
@@ -236,6 +251,9 @@ export const platformContract = {
       "destructive": true,
       "experimental": true,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 1200,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; inspect provider-side resize state before retrying manually",
@@ -267,6 +285,9 @@ export const platformContract = {
       "destructive": false,
       "experimental": true,
       "execution_path": "agent",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 120,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption or timeout; late agent results are ignored",
@@ -297,6 +318,9 @@ export const platformContract = {
       "destructive": false,
       "experimental": true,
       "execution_path": "worker",
+      "dispatch_policy": {
+        "queue_server": true
+      },
       "timeout_seconds": 900,
       "retry_limit": 0,
       "recovery": "mark failed on worker interruption; retry manually after inspection",

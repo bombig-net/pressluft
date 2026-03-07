@@ -1,7 +1,8 @@
 import { ref, readonly } from 'vue'
-import type { JobKind, JobStatus, JobTerminalStatus } from '~/lib/platform-contract.generated'
+import type { CreateJobRequest, Job, JobEvent } from '~/lib/api-contract'
+import type { JobStatus, JobTerminalStatus } from '~/lib/platform-contract.generated'
 import { jobTerminalStatuses } from '~/lib/platform-contract.generated'
-import type { Job, JobEvent } from '~/lib/api-contract'
+import { parseJob, parseJobEvents } from '~/lib/api-runtime'
 export type { Job, JobEvent } from '~/lib/api-contract'
 
 /** Connection mode for job monitoring */
@@ -15,18 +16,14 @@ export function useJobs() {
   const error = ref('')
   const connectionMode = ref<ConnectionMode>('disconnected')
 
-  const createJob = async (payload: {
-    kind?: JobKind
-    server_id?: number
-    payload?: Record<string, unknown> | string | null
-  }) => {
+  const createJob = async (payload: CreateJobRequest) => {
     loading.value = true
     error.value = ''
     try {
-      const job = await apiFetch<Job>('/jobs', {
+      const job = parseJob(await apiFetch('/jobs', {
         method: 'POST',
         body: payload,
-      })
+      }))
       activeJob.value = job
       return job
     } finally {
@@ -36,14 +33,14 @@ export function useJobs() {
 
   const fetchJob = async (jobId: number) => {
     error.value = ''
-    const job = await apiFetch<Job>(`/jobs/${jobId}`)
+    const job = parseJob(await apiFetch(`/jobs/${jobId}`))
     activeJob.value = job
     return job
   }
 
   const fetchJobEvents = async (jobId: number) => {
     error.value = ''
-    const data = await apiFetch<JobEvent[]>(`/jobs/${jobId}/events/history`)
+    const data = parseJobEvents(await apiFetch(`/jobs/${jobId}/events/history`))
     events.value = data
     return data
   }
@@ -127,7 +124,7 @@ export function useJobs() {
 
       stream.addEventListener('job_event', (evt) => {
         try {
-          const parsed = JSON.parse((evt as MessageEvent).data) as JobEvent
+          const parsed = parseJobEvents([JSON.parse((evt as MessageEvent).data)])[0]
           events.value = [...events.value, parsed]
           onEvent?.(parsed)
 

@@ -1,5 +1,10 @@
 import { computed, ref } from "vue"
 import type { Activity, ActivityListResponse } from "~/lib/api-contract"
+import {
+  parseActivity,
+  parseActivityListResponse,
+  parseUnreadCountResponse,
+} from "~/lib/api-runtime"
 export type { Activity, ActivityListResponse } from "~/lib/api-contract"
 
 export interface ActivityFilter {
@@ -83,7 +88,7 @@ export function useActivity() {
     try {
       const params = buildActivityParams(filter, options)
       const query = params.toString()
-      const payload = await apiFetch<ActivityListResponse>(`/activity${query ? `?${query}` : ""}`)
+      const payload = parseActivityListResponse(await apiFetch(`/activity${query ? `?${query}` : ""}`))
       const next = payload.next_cursor || ""
 
       if (options.append) {
@@ -110,8 +115,8 @@ export function useActivity() {
     try {
       const params = buildActivityParams({}, options)
       const query = params.toString()
-      const payload = await apiFetch<ActivityListResponse>(
-        `/servers/${serverId}/activity${query ? `?${query}` : ""}`,
+      const payload = parseActivityListResponse(
+        await apiFetch(`/servers/${serverId}/activity${query ? `?${query}` : ""}`),
       )
       const next = payload.next_cursor || ""
 
@@ -156,7 +161,7 @@ export function useActivity() {
 
         stream.addEventListener("activity", (evt) => {
           try {
-            const parsed = JSON.parse((evt as MessageEvent).data) as Activity
+            const parsed = parseActivity(JSON.parse((evt as MessageEvent).data))
             if (parsed.id > lastSeenId) {
               lastSeenId = parsed.id
             }
@@ -204,8 +209,8 @@ export function useActivity() {
     try {
       const params = buildActivityParams(filter)
       const query = params.toString()
-      const payload = await apiFetch<{ count: number }>(
-        `/activity/unread-count${query ? `?${query}` : ""}`,
+      const payload = parseUnreadCountResponse(
+        await apiFetch(`/activity/unread-count${query ? `?${query}` : ""}`),
       )
       unreadCount.value = payload.count
       return payload.count
@@ -216,9 +221,9 @@ export function useActivity() {
   }
 
   const markRead = async (activityId: number) => {
-    const payload = await apiFetch<Activity>(`/activity/${activityId}/read`, {
+    const payload = parseActivity(await apiFetch(`/activity/${activityId}/read`, {
       method: "POST",
-    })
+    }))
     const previous = activities.value.find((item) => item.id === activityId)
     const wasUnread = previous && !previous.read_at
     upsertActivity(payload, false)

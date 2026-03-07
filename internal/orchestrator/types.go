@@ -53,12 +53,17 @@ type JobKindSpec struct {
 	Destructive     bool
 	Experimental    bool
 	ExecutionPath   string
+	DispatchPolicy  DispatchPolicy
 	Timeout         time.Duration
 	RetryLimit      int
 	Recovery        string
 	QueuedStatus    platform.ServerStatus
 	Steps           []WorkflowStep
 	ValidatePayload JobPayloadValidator
+}
+
+type DispatchPolicy struct {
+	QueueServer bool
 }
 
 type WorkflowStep struct {
@@ -69,14 +74,14 @@ type WorkflowStep struct {
 type JobPayloadValidator func(json.RawMessage, int64) (string, error)
 
 var supportedJobKinds = []JobKindSpec{
-	{Kind: JobKindProvisionServer, Label: "Server infrastructure provisioning", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider state before retrying manually", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "provision", Label: "Provisioning infrastructure"}}, ValidatePayload: validateProvisionServerPayload},
-	{Kind: JobKindConfigureServer, Label: "Server setup", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry setup manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "configure", Label: "Configuring server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateConfigureServerPayload},
-	{Kind: JobKindDeleteServer, Label: "Server deletion", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; verify provider-side deletion before retrying manually", QueuedStatus: platform.ServerStatusDeleting, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "delete", Label: "Deleting server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateDeleteServerPayload},
-	{Kind: JobKindRebuildServer, Label: "Server rebuild", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 45 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect machine state before retrying manually", QueuedStatus: platform.ServerStatusRebuilding, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "rebuild", Label: "Rebuilding server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRebuildServerPayload},
-	{Kind: JobKindResizeServer, Label: "Server resize", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider-side resize state before retrying manually", QueuedStatus: platform.ServerStatusResizing, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "resize", Label: "Resizing server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateResizeServerPayload},
-	{Kind: JobKindUpdateFirewalls, Label: "Firewall update", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", Timeout: 15 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "update_firewalls", Label: "Updating firewalls"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateUpdateFirewallsPayload},
-	{Kind: JobKindManageVolume, Label: "Volume management", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "manage_volume", Label: "Managing volume"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateManageVolumePayload},
-	{Kind: JobKindRestartService, Label: "Service restart", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "agent", Timeout: 2 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption or timeout; late agent results are ignored", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "restart_service", Label: "Restarting service"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRestartServicePayload},
+	{Kind: JobKindProvisionServer, Label: "Server infrastructure provisioning", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: false}, Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider state before retrying manually", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "provision", Label: "Provisioning infrastructure"}}, ValidatePayload: validateProvisionServerPayload},
+	{Kind: JobKindConfigureServer, Label: "Server setup", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: false}, Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry setup manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "configure", Label: "Configuring server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateConfigureServerPayload},
+	{Kind: JobKindDeleteServer, Label: "Server deletion", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; verify provider-side deletion before retrying manually", QueuedStatus: platform.ServerStatusDeleting, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "delete", Label: "Deleting server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateDeleteServerPayload},
+	{Kind: JobKindRebuildServer, Label: "Server rebuild", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 45 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect machine state before retrying manually", QueuedStatus: platform.ServerStatusRebuilding, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "rebuild", Label: "Rebuilding server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRebuildServerPayload},
+	{Kind: JobKindResizeServer, Label: "Server resize", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider-side resize state before retrying manually", QueuedStatus: platform.ServerStatusResizing, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "resize", Label: "Resizing server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateResizeServerPayload},
+	{Kind: JobKindUpdateFirewalls, Label: "Firewall update", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 15 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "update_firewalls", Label: "Updating firewalls"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateUpdateFirewallsPayload},
+	{Kind: JobKindManageVolume, Label: "Volume management", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "manage_volume", Label: "Managing volume"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateManageVolumePayload},
+	{Kind: JobKindRestartService, Label: "Service restart", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "agent", DispatchPolicy: DispatchPolicy{QueueServer: true}, Timeout: 2 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption or timeout; late agent results are ignored", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "restart_service", Label: "Restarting service"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRestartServicePayload},
 }
 
 // SupportedJobKinds returns the current canonical job-kind contract.
@@ -119,6 +124,14 @@ func JobKindPolicy(kind string) (JobKindSpec, bool) {
 		}
 	}
 	return JobKindSpec{}, false
+}
+
+func DispatchPolicyForKind(kind string) (DispatchPolicy, bool) {
+	spec, ok := JobKindPolicy(kind)
+	if !ok {
+		return DispatchPolicy{}, false
+	}
+	return spec.DispatchPolicy, true
 }
 
 func WorkflowStepsForKind(kind string) []WorkflowStep {

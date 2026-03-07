@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"pressluft/internal/activity"
+	"pressluft/internal/apitypes"
 	"pressluft/internal/auth"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/platform"
@@ -196,14 +197,12 @@ func missingDashboardHandler() http.Handler {
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request, options HandlerOptions) {
-	payload := map[string]any{
-		"status": "healthy",
-	}
+	payload := apitypes.HealthResponse{Status: "healthy"}
 	if options.IsDev {
 		mode := platform.DetectCallbackURLMode(options.ControlPlaneURL)
-		payload["callback_url_mode"] = mode
+		payload.CallbackURLMode = mode
 		if mode == platform.CallbackURLModeEphemeral {
-			payload["callback_url_warning"] = "Cloudflare quick tunnels are session-scoped. Remote agents configured against this URL will not reconnect after control-plane restart."
+			payload.CallbackURLWarning = "Cloudflare quick tunnels are session-scoped. Remote agents configured against this URL will not reconnect after control-plane restart."
 		}
 	}
 	respondJSON(w, http.StatusOK, payload)

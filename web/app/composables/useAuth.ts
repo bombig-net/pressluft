@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import type { AuthActor } from '~/lib/api-contract'
+import { parseAuthActor } from '~/lib/api-runtime'
 
 export function useAuth() {
   const user = useState<AuthActor | null>('auth-user', () => null)
@@ -8,7 +9,7 @@ export function useAuth() {
 
   const fetchMe = async () => {
     try {
-      const actor = await apiFetch<AuthActor>('/auth/me')
+      const actor = parseAuthActor(await apiFetch('/auth/me'))
       user.value = actor
       return actor
     } catch {
@@ -20,10 +21,10 @@ export function useAuth() {
   }
 
   const login = async (email: string, password: string) => {
-    const actor = await apiFetch<AuthActor>('/auth/login', {
+    const actor = parseAuthActor(await apiFetch('/auth/login', {
       method: 'POST',
       body: { email, password },
-    })
+    }))
     user.value = actor
     initialized.value = true
     return actor

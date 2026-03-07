@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,22 @@ func TestGeneratedAPITypeScriptContractIsFresh(t *testing.T) {
 
 	if string(current) != rendered {
 		t.Fatalf("generated api contract is stale; run `make generate-contract`")
+	}
+}
+
+func TestRenderAPITypeScriptModuleIncludesRequestContracts(t *testing.T) {
+	rendered, err := RenderAPITypeScriptModule()
+	if err != nil {
+		t.Fatalf("RenderAPITypeScriptModule() error = %v", err)
+	}
+
+	for _, needle := range []string{
+		"export interface CreateJobRequest",
+		"export interface CreateServerRequest",
+		"export interface LoginRequest",
+	} {
+		if !strings.Contains(rendered, needle) {
+			t.Fatalf("RenderAPITypeScriptModule() missing %q", needle)
+		}
 	}
 }

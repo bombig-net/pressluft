@@ -19,68 +19,25 @@ import (
 	"pressluft/internal/provider/hetzner"
 	"pressluft/internal/runner"
 	"pressluft/internal/security"
+	serverpkg "pressluft/internal/server"
 	"pressluft/internal/server/profiles"
 )
 
 // ServerStore defines the server persistence interface needed by the executor.
 type ServerStore interface {
-	GetByID(ctx context.Context, id int64) (*StoredServer, error)
+	GetByID(ctx context.Context, id int64) (*serverpkg.StoredServer, error)
 	UpdateStatus(ctx context.Context, id int64, status platform.ServerStatus) error
 	UpdateSetupState(ctx context.Context, id int64, setupState platform.SetupState, setupLastError string) error
 	UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus string, status platform.ServerStatus, ipv4, ipv6 string) error
 	UpdateServerType(ctx context.Context, id int64, serverType string) error
 	UpdateImage(ctx context.Context, id int64, image string) error
-	GetKey(ctx context.Context, serverID int64) (*StoredServerKey, error)
-	CreateKey(ctx context.Context, in CreateServerKeyInput) error
-}
-
-// StoredServer mirrors the server package type to avoid import cycles.
-type StoredServer struct {
-	ID               int64
-	ProviderID       int64
-	ProviderType     string
-	ProviderServerID string
-	IPv4             string
-	IPv6             string
-	Name             string
-	Location         string
-	ServerType       string
-	Image            string
-	ProfileKey       string
-	Status           platform.ServerStatus
-	SetupState       platform.SetupState
-	SetupLastError   string
-}
-
-// StoredServerKey mirrors the server package key type to avoid import cycles.
-type StoredServerKey struct {
-	ServerID            int64
-	PublicKey           string
-	PrivateKeyEncrypted string
-	EncryptionKeyID     string
-	CreatedAt           string
-	RotatedAt           string
-}
-
-// CreateServerKeyInput mirrors the server package input type to avoid import cycles.
-type CreateServerKeyInput struct {
-	ServerID            int64
-	PublicKey           string
-	PrivateKeyEncrypted string
-	EncryptionKeyID     string
-	RotatedAt           string
+	GetKey(ctx context.Context, serverID int64) (*serverpkg.StoredServerKey, error)
+	CreateKey(ctx context.Context, in serverpkg.CreateServerKeyInput) error
 }
 
 // ProviderStore defines the provider persistence interface needed by the executor.
 type ProviderStore interface {
-	GetByID(ctx context.Context, id int64) (*StoredProvider, error)
-}
-
-// StoredProvider mirrors the provider package type to avoid import cycles.
-type StoredProvider struct {
-	ID       int64
-	Type     string
-	APIToken string
+	GetByID(ctx context.Context, id int64) (*provider.StoredProvider, error)
 }
 
 // Executor runs job steps and emits events.
@@ -291,7 +248,7 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 		if err != nil {
 			return e.failJob(ctx, job, fmt.Sprintf("failed to encrypt SSH key: %v", err))
 		}
-		if err := e.serverStore.CreateKey(ctx, CreateServerKeyInput{
+		if err := e.serverStore.CreateKey(ctx, serverpkg.CreateServerKeyInput{
 			ServerID:            server.ID,
 			PublicKey:           publicKey,
 			PrivateKeyEncrypted: encryptedKey,
@@ -307,7 +264,7 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 			publicKey = storedKey.PublicKey
 			e.logSSHPublicKey("stored_after_conflict", publicKey)
 		} else {
-			storedKey = &StoredServerKey{
+			storedKey = &serverpkg.StoredServerKey{
 				ServerID:            server.ID,
 				PublicKey:           publicKey,
 				PrivateKeyEncrypted: encryptedKey,
@@ -951,7 +908,7 @@ func (e *Executor) executeManageVolume(ctx context.Context, job *orchestrator.Jo
 	return e.completeJob(ctx, job, "finalize")
 }
 
-func (e *Executor) runConfigurePlaybook(ctx context.Context, jobID int64, server *StoredServer, ipv4, privateKey string, storedKey *StoredServerKey) error {
+func (e *Executor) runConfigurePlaybook(ctx context.Context, jobID int64, server *serverpkg.StoredServer, ipv4, privateKey string, storedKey *serverpkg.StoredServerKey) error {
 	if server == nil {
 		return fmt.Errorf("server is required")
 	}

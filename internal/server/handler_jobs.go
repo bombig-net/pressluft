@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"pressluft/internal/activity"
+	"pressluft/internal/apitypes"
 	"pressluft/internal/orchestrator"
 )
 
@@ -17,12 +18,6 @@ type jobsHandler struct {
 	store         *orchestrator.Store
 	serverStore   *ServerStore
 	activityStore *activity.Store
-}
-
-type createJobRequest struct {
-	Kind     string          `json:"kind"`
-	ServerID int64           `json:"server_id"`
-	Payload  json.RawMessage `json:"payload"`
 }
 
 func (jh *jobsHandler) route(w http.ResponseWriter, r *http.Request) {
@@ -96,12 +91,13 @@ func (jh *jobsHandler) routeWithID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (jh *jobsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
-	var req createJobRequest
+	var req apitypes.CreateJobRequest
 	if err := decodeJSONBody(w, r, defaultJSONBodyLimit, &req); err != nil {
 		return
 	}
-	if strings.TrimSpace(req.Kind) == "" {
-		req.Kind = "provision_server"
+	if err := req.Validate(); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	slog.Default().Info("job action requested", "job_kind", req.Kind, "server_id", req.ServerID)
 	payload, err := validateJobPayload(req)
@@ -112,7 +108,12 @@ func (jh *jobsHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	var job orchestrator.Job
 	if req.ServerID > 0 && jh.serverStore != nil {
-		if req.Kind == string(orchestrator.JobKindDeleteServer) || req.Kind == string(orchestrator.JobKindRebuildServer) || req.Kind == string(orchestrator.JobKindResizeServer) || req.Kind == string(orchestrator.JobKindUpdateFirewalls) || req.Kind == string(orchestrator.JobKindManageVolume) || req.Kind == string(orchestrator.JobKindRestartService) {
+		dispatchPolicy, ok := orchestrator.DispatchPolicyForKind(req.Kind)
+		if !ok {
+			respondError(w, http.StatusBadRequest, "unsupported job kind: "+req.Kind)
+			return
+		}
+		if dispatchPolicy.QueueServer {
 			_, job, err = jh.serverStore.QueueServerJob(r.Context(), QueueServerJobInput{
 				ServerID: req.ServerID,
 				Kind:     req.Kind,
@@ -177,7 +178,7 @@ func jobKindLabel(kind string) string {
 	return orchestrator.JobKindLabel(kind)
 }
 
-func validateJobPayload(req createJobRequest) (string, error) {
+func validateJobPayload(req apitypes.CreateJobRequest) (string, error) {
 	return orchestrator.ValidatePayload(req.Kind, req.Payload, req.ServerID)
 }
 

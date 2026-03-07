@@ -1,5 +1,6 @@
 import { ref, readonly, onUnmounted, onMounted, type Ref } from 'vue'
 import type { AgentInfo } from '~/lib/api-contract'
+import { parseAgentInfo, parseAgentStatusMapResponse } from '~/lib/api-runtime'
 import { reachableNodeStatuses } from '~/lib/platform-contract.generated'
 
 interface UseAgentStatusOptions {
@@ -28,7 +29,7 @@ export function useAgentStatus(serverId: Ref<number | null>, options: UseAgentSt
     loading.value = true
     error.value = ''
     try {
-      agentInfo.value = await apiFetch<AgentInfo>(`/servers/${serverId.value}/agent-status`)
+      agentInfo.value = parseAgentInfo(await apiFetch(`/servers/${serverId.value}/agent-status`))
     } catch (e: any) {
       error.value = e.message
     } finally {
@@ -89,7 +90,7 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
     loading.value = true
     error.value = ''
     try {
-      agentInfoMap.value = await apiFetch<Record<number, AgentInfo>>('/servers/agents')
+      agentInfoMap.value = parseAgentStatusMapResponse(await apiFetch('/servers/agents'))
     } catch (e: any) {
       error.value = e.message
     } finally {
