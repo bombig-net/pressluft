@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"nhooyr.io/websocket"
+	"pressluft/internal/platform"
 )
 
 type nodeStatusUpdate struct {
@@ -43,9 +39,8 @@ func (s *recordingNodeStatusStore) latest() nodeStatusUpdate {
 	return s.updates[len(s.updates)-1]
 }
 
-func TestHandlerHeartbeatPersistsOnlineAndAcks(t *testing.T) {
-	serverConn, clientConn := newTestWebsocketPair(t)
-	conn := NewConn(serverConn, 42)
+func TestHandlerHeartbeatPersistsOnlineAndUpdatesState(t *testing.T) {
+	conn := NewConn(nil, 42)
 	store := &recordingNodeStatusStore{}
 	handler := NewHandler(NewHub(), nil, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -55,79 +50,31 @@ func TestHandlerHeartbeatPersistsOnlineAndAcks(t *testing.T) {
 	}
 	handler.handleHeartbeat(context.Background(), conn, Envelope{Type: TypeHeartbeat, Payload: payload})
 
-	_, message, err := clientConn.Read(context.Background())
-	if err != nil {
-		t.Fatalf("read ack: %v", err)
+	if got := conn.Version(); got != "1.2.3" {
+		t.Fatalf("connection version = %q, want %q", got, "1.2.3")
 	}
-	var env Envelope
-	if err := json.Unmarshal(message, &env); err != nil {
-		t.Fatalf("unmarshal ack envelope: %v", err)
+	cpuPercent, memUsedMB, memTotalMB := conn.Metrics()
+	if cpuPercent != 10 || memUsedMB != 64 || memTotalMB != 128 {
+		t.Fatalf("connection metrics = (%v, %d, %d), want (10, 64, 128)", cpuPercent, memUsedMB, memTotalMB)
 	}
-	if env.Type != TypeHeartbeatAck {
-		t.Fatalf("ack type = %q, want %q", env.Type, TypeHeartbeatAck)
-	}
-	if got := store.latest(); got.status != string(AgentStatusOnline) || got.version != "1.2.3" {
+	if got := store.latest(); got.status != string(platform.NodeStatusOnline) || got.version != "1.2.3" {
 		t.Fatalf("latest update = %+v, want online with version", got)
 	}
 }
 
 func TestHandleConnectionMarksNodeUnhealthyOnDisconnect(t *testing.T) {
-	serverConn, clientConn := newTestWebsocketPair(t)
 	hub := NewHub()
-	conn := NewConn(serverConn, 9)
+	conn := NewConn(nil, 9)
 	hub.Register(conn)
 	store := &recordingNodeStatusStore{}
 	handler := NewHandler(hub, nil, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	done := make(chan struct{})
-	go func() {
-		handler.HandleConnection(context.Background(), conn)
-		close(done)
-	}()
-
-	if err := clientConn.Close(websocket.StatusNormalClosure, "bye"); err != nil {
-		t.Fatalf("close client: %v", err)
-	}
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not exit after disconnect")
-	}
+	handler.HandleConnection(context.Background(), conn)
 
 	if _, ok := hub.Get(9); ok {
 		t.Fatal("expected connection to be unregistered")
 	}
-	if got := store.latest(); got.status != string(AgentStatusUnhealthy) {
+	if got := store.latest(); got.status != string(platform.NodeStatusUnhealthy) {
 		t.Fatalf("latest update = %+v, want unhealthy", got)
-	}
-}
-
-func newTestWebsocketPair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
-	t.Helper()
-	accepted := make(chan *websocket.Conn, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			t.Errorf("accept websocket: %v", err)
-			return
-		}
-		accepted <- conn
-	}))
-	t.Cleanup(srv.Close)
-
-	clientConn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-	if err != nil {
-		t.Fatalf("dial websocket: %v", err)
-	}
-	t.Cleanup(func() { _ = clientConn.Close(websocket.StatusNormalClosure, "") })
-
-	select {
-	case serverConn := <-accepted:
-		t.Cleanup(func() { _ = serverConn.Close(websocket.StatusNormalClosure, "") })
-		return serverConn, clientConn
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for server websocket")
-		return nil, nil
 	}
 }

@@ -10,13 +10,13 @@ import (
 )
 
 func TestRegistryMatchesProfileArtifacts(t *testing.T) {
-	if err := ValidateRegistryArtifacts(repoRoot(t)); err != nil {
+	if err := ValidateRegistryArtifacts(testRepoRoot(t)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestProfileArtifactsSatisfySchema(t *testing.T) {
-	repoRoot := repoRoot(t)
+	repoRoot := testRepoRoot(t)
 	compiler := jsonschema.NewCompiler()
 	schemaPath := filepath.Join(repoRoot, "ops", "schemas", "profile.schema.json")
 	schema, err := compiler.Compile("file://" + filepath.ToSlash(schemaPath))
@@ -43,7 +43,7 @@ func TestProfileArtifactsSatisfySchema(t *testing.T) {
 	}
 }
 
-func repoRoot(t *testing.T) string {
+func testRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {

@@ -1,5 +1,6 @@
 import { ref, readonly, onUnmounted, onMounted, type Ref } from 'vue'
 import type { AgentInfo, AgentStatusType } from './useServers'
+import { reachableNodeStatuses } from '~/lib/platform-contract.generated'
 
 interface UseAgentStatusOptions {
   /** Polling interval in milliseconds. Default: 15000 (15s) */
@@ -109,7 +110,7 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
 
   const isReachable = (serverId: number): boolean => {
     const info = agentInfoMap.value[serverId]
-    return info?.status === 'online' || info?.status === 'unhealthy'
+    return info ? reachableNodeStatuses.includes(info.status) : false
   }
 
   const getStatusType = (serverId: number): AgentStatusType => {

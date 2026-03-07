@@ -3,6 +3,8 @@
 set -eu
 
 . "$(dirname "$0")/common.sh"
+maybe_print_help "${1:-}"
+announce_step "01 provider setup"
 
 require_env PRESSLUFT_HETZNER_API_TOKEN
 

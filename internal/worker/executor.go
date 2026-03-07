@@ -302,9 +302,9 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 			}
 			if storedKey == nil {
 				return e.failJob(ctx, job, fmt.Sprintf("failed to store SSH key: %v", err))
-				}
-				publicKey = storedKey.PublicKey
-				e.logSSHPublicKey("stored_after_conflict", publicKey)
+			}
+			publicKey = storedKey.PublicKey
+			e.logSSHPublicKey("stored_after_conflict", publicKey)
 		} else {
 			storedKey = &StoredServerKey{
 				ServerID:            server.ID,
@@ -656,6 +656,9 @@ func (e *Executor) executeRebuildServer(ctx context.Context, job *orchestrator.J
 	if serverImage == "" {
 		return e.failJob(ctx, job, "server_image is required for rebuild_server job")
 	}
+	if _, err := validateSelectableProfile(server.ProfileKey); err != nil {
+		return e.failJob(ctx, job, err.Error())
+	}
 
 	e.emitStepComplete(ctx, job.ID, "validate", "Rebuild request validated")
 
@@ -998,16 +1001,9 @@ func (e *Executor) runConfigurePlaybook(ctx context.Context, jobID int64, server
 		return fmt.Errorf("configure playbook path not configured")
 	}
 
-	profile, ok := profiles.Get(server.ProfileKey)
-	if !ok {
-		return fmt.Errorf("unknown profile key: %s", server.ProfileKey)
-	}
-	if !profile.Selectable() {
-		reason := strings.TrimSpace(profile.SupportReason)
-		if reason == "" {
-			reason = "profile is not selectable in the current platform contract"
-		}
-		return fmt.Errorf("profile %q is %s: %s", profile.Key, profile.SupportLevel, reason)
+	profile, err := validateSelectableProfile(server.ProfileKey)
+	if err != nil {
+		return err
 	}
 
 	if privateKey == "" {
@@ -1053,16 +1049,16 @@ func (e *Executor) runConfigurePlaybook(ctx context.Context, jobID int64, server
 		return fmt.Errorf("agent binary not found at %q; ensure bin/pressluft-agent exists in the project root", agentBinaryPath)
 	}
 
-	extraVars := map[string]string{
-		"server_id":                   strconv.FormatInt(server.ID, 10),
-		"control_plane_url":           e.controlPlaneURL,
-		"pressluft_execution_mode":    string(e.executionMode),
-		"profile_key":                 profile.Key,
-		"profile_path":                profile.ArtifactPath,
-		"profile_support_level":       string(profile.SupportLevel),
-		"profile_configure_guarantee": profile.ConfigureGuarantee,
-		"agent_binary_path":           agentBinaryPath,
-	}
+	extraVars := ConfigureContract{
+		ServerID:           server.ID,
+		ControlPlaneURL:    e.controlPlaneURL,
+		ExecutionMode:      e.executionMode,
+		ProfileKey:         profile.Key,
+		ProfileArtifact:    profile.ArtifactPath,
+		ProfileSupport:     profile.SupportLevel,
+		ConfigureGuarantee: profile.ConfigureGuarantee,
+		AgentBinaryPath:    agentBinaryPath,
+	}.ExtraVars()
 
 	devVars, err := e.extraAgentVars(ctx, server.ID)
 	if err != nil {
@@ -1080,6 +1076,22 @@ func (e *Executor) runConfigurePlaybook(ctx context.Context, jobID int64, server
 	}
 
 	return e.runner.Run(ctx, configureRequest, &runnerEventSink{jobStore: e.jobStore, jobID: jobID, logger: e.logger})
+}
+
+func validateSelectableProfile(profileKey string) (profiles.Profile, error) {
+	profile, ok := profiles.Get(profileKey)
+	if !ok {
+		return profiles.Profile{}, fmt.Errorf("unknown profile key: %s", profileKey)
+	}
+	if profile.Selectable() {
+		return profile, nil
+	}
+
+	reason := strings.TrimSpace(profile.SupportReason)
+	if reason == "" {
+		reason = "profile is not selectable in the current platform contract"
+	}
+	return profiles.Profile{}, fmt.Errorf("profile %q is %s: %s", profile.Key, profile.SupportLevel, reason)
 }
 
 func (e *Executor) setServerStatus(ctx context.Context, serverID int64, status platform.ServerStatus) {

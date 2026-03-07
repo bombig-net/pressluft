@@ -7,9 +7,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"io"
 	"math/big"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,33 +20,43 @@ import (
 
 func TestRegisterPersistsLoadableKeypairAndClearsToken(t *testing.T) {
 	caCert, caKey := newTestCA(t)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/nodes/42/register" {
-			t.Fatalf("path = %q", r.URL.Path)
-		}
-		var req RegisterRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		csr, err := ParseCSR(req.CSR)
-		if err != nil {
-			t.Fatalf("ParseCSR() error = %v", err)
-		}
-		certPEM := signClientCSR(t, caCert, caKey, csr)
-		caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
-		_ = json.NewEncoder(w).Encode(RegisterResponse{Certificate: string(certPEM), CACert: string(caPEM)})
-	}))
-	defer server.Close()
-
 	previousClient := registrationHTTPClient
-	registrationHTTPClient = server.Client()
+	registrationHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %q", r.Method)
+			}
+			if r.URL.String() != "https://control.example.test/api/nodes/42/register" {
+				t.Fatalf("url = %q", r.URL.String())
+			}
+			var req RegisterRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			csr, err := ParseCSR(req.CSR)
+			if err != nil {
+				t.Fatalf("ParseCSR() error = %v", err)
+			}
+			certPEM := signClientCSR(t, caCert, caKey, csr)
+			caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+			payload, err := json.Marshal(RegisterResponse{Certificate: string(certPEM), CACert: string(caPEM)})
+			if err != nil {
+				t.Fatalf("marshal response: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(payload))),
+			}, nil
+		}),
+	}
 	t.Cleanup(func() { registrationHTTPClient = previousClient })
 
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "agent.yaml")
 	cfg := &Config{
 		ServerID:          42,
-		ControlPlane:      server.URL,
+		ControlPlane:      "https://control.example.test",
 		CertFile:          filepath.Join(dir, "agent.crt"),
 		KeyFile:           filepath.Join(dir, "agent.key"),
 		CACertFile:        filepath.Join(dir, "ca.crt"),
@@ -80,6 +91,15 @@ func TestRegisterPersistsLoadableKeypairAndClearsToken(t *testing.T) {
 	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
 		t.Fatalf("ParsePKCS8PrivateKey() error = %v", err)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f == nil {
+		return nil, fmt.Errorf("round trip function is required")
+	}
+	return f(r)
 }
 
 func ParseCSR(raw string) (*x509.CertificateRequest, error) {

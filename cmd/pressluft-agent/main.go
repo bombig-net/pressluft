@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"pressluft/internal/agent"
+	"pressluft/internal/envconfig"
 	"pressluft/internal/platform"
 )
 
@@ -25,11 +26,12 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	executionMode, err := platform.NormalizeAgentExecutionMode(os.Getenv("PRESSLUFT_EXECUTION_MODE"), isDevBuild())
+	runtimeConfig, err := envconfig.ResolveAgentRuntime(isDevBuild(), *configPath)
 	if err != nil {
-		logger.Error("failed to resolve execution mode", "error", err)
+		logger.Error("failed to resolve agent config", "error", err)
 		os.Exit(1)
 	}
+	executionMode := runtimeConfig.ExecutionMode
 	logExecutionMode(logger, executionMode)
 
 	cfg, err := agent.LoadConfig(*configPath)
@@ -68,9 +70,7 @@ func main() {
 func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
 	logger.Info("platform contract loaded",
 		"execution_mode", mode,
-		"contract_ref", "README.md#platform-contract",
-		"lifecycle_note", "docs/internal/lifecycle-state-semantics.md",
-		"glossary", "docs/glossary.md",
+		"contract_package", "pressluft/internal/contract",
 	)
 
 	switch mode {

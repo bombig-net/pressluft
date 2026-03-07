@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"pressluft/internal/observability"
+	"pressluft/internal/platform"
 )
 
 type Completer interface {
@@ -38,18 +39,18 @@ func NewHandler(hub *Hub, completer Completer, waiter *ResultWaiter, store NodeS
 
 func (h *Handler) HandleConnection(ctx context.Context, conn *Conn) {
 	corr := observability.Correlation{ServerID: conn.ServerID()}
-	h.logger.Info("agent websocket session opened", corr.LogArgs("node_status", AgentStatusOnline)...)
-	h.persistNodeStatus(context.Background(), conn.ServerID(), string(AgentStatusOnline), conn.LastSeen(), conn.Version(), "connect")
+	h.logger.Info("agent websocket session opened", corr.LogArgs("node_status", platform.NodeStatusOnline)...)
+	h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusOnline), conn.LastSeen(), conn.Version(), "connect")
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.logger.Error("agent websocket session panicked", corr.LogArgs("panic", recovered)...)
 		}
-		h.persistNodeStatus(context.Background(), conn.ServerID(), string(AgentStatusUnhealthy), conn.LastSeen(), conn.Version(), "disconnect")
+		h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusUnhealthy), conn.LastSeen(), conn.Version(), "disconnect")
 		h.hub.Unregister(conn.ServerID())
 		if err := conn.Close(); err != nil {
 			h.logger.Debug("agent websocket close failed", corr.LogArgs("error", err)...)
 		}
-		h.logger.Info("agent websocket session closed", corr.LogArgs("node_status", AgentStatusUnhealthy)...)
+		h.logger.Info("agent websocket session closed", corr.LogArgs("node_status", platform.NodeStatusUnhealthy)...)
 	}()
 
 	for {
@@ -96,8 +97,8 @@ func (h *Handler) handleHeartbeat(ctx context.Context, conn *Conn, env Envelope)
 		return
 	}
 	ack.Payload = ackPayload
-	h.persistNodeStatus(context.Background(), conn.ServerID(), string(AgentStatusOnline), conn.LastSeen(), conn.Version(), "heartbeat")
-	h.logger.Debug("agent heartbeat received", "server_id", conn.ServerID(), "node_status", AgentStatusOnline, "version", conn.Version())
+	h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusOnline), conn.LastSeen(), conn.Version(), "heartbeat")
+	h.logger.Debug("agent heartbeat received", "server_id", conn.ServerID(), "node_status", platform.NodeStatusOnline, "version", conn.Version())
 
 	_ = conn.Send(ctx, ack)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -114,37 +115,13 @@ type HealthCheck struct {
 	Command string `yaml:"command" json:"command"`
 }
 
-var registry = []Profile{
-	{
-		Key:                "nginx-stack",
-		Name:               "NGINX Stack",
-		Description:        "Supported baseline profile identifier for the current Ubuntu 24.04 web stack. This is an internal platform contract, not a WordPress compatibility claim.",
-		Image:              "ubuntu-24.04",
-		ArtifactPath:       "ops/profiles/nginx-stack/profile.yaml",
-		SupportLevel:       platform.SupportLevelSupported,
-		ConfigureGuarantee: "Successful configure proves the common platform baseline, agent deployment, and the nginx-stack role all converged. Verification confirms required services are active, expected config files exist, expected listeners answer locally, and profile health checks pass before the server is marked ready.",
-	},
-	{
-		Key:                "openlitespeed-stack",
-		Name:               "OpenLiteSpeed Stack",
-		Description:        "OpenLiteSpeed profile identifier reserved for future convergence work. This identifier does not currently imply application support.",
-		Image:              "ubuntu-24.04",
-		ArtifactPath:       "ops/profiles/openlitespeed-stack/profile.yaml",
-		SupportLevel:       platform.SupportLevelUnavailable,
-		ConfigureGuarantee: "Selection is blocked. Pressluft does not yet converge or verify an OpenLiteSpeed baseline for this internal profile identifier.",
-		SupportReason:      "Milestone 4 fully supports nginx-stack first and blocks this profile until its stack role and verification contract are implemented.",
-	},
-	{
-		Key:                "woocommerce-optimized",
-		Name:               "WooCommerce Optimized",
-		Description:        "Commerce-oriented profile identifier reserved for future convergence work. This identifier does not currently imply WooCommerce compatibility or tuning support.",
-		Image:              "ubuntu-24.04",
-		ArtifactPath:       "ops/profiles/woocommerce-optimized/profile.yaml",
-		SupportLevel:       platform.SupportLevelUnavailable,
-		ConfigureGuarantee: "Selection is blocked. Pressluft does not yet converge or verify this internal profile identifier.",
-		SupportReason:      "Milestone 4 narrows support to one verified baseline profile instead of implying broader app-specific coverage.",
-	},
+var registryArtifactPaths = []string{
+	"ops/profiles/nginx-stack/profile.yaml",
+	"ops/profiles/openlitespeed-stack/profile.yaml",
+	"ops/profiles/woocommerce-optimized/profile.yaml",
 }
+
+var registry = mustLoadRegistry()
 
 // All returns all available server profiles.
 func All() []Profile {
@@ -178,6 +155,47 @@ func LoadArtifact(path string) (Artifact, error) {
 		return Artifact{}, err
 	}
 	return artifact, nil
+}
+
+func mustLoadRegistry() []Profile {
+	profiles, err := loadRegistry()
+	if err != nil {
+		panic(err)
+	}
+	return profiles
+}
+
+func loadRegistry() ([]Profile, error) {
+	root, err := repoRoot()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Profile, 0, len(registryArtifactPaths))
+	for _, artifactPath := range registryArtifactPaths {
+		artifact, err := LoadArtifact(filepath.Join(root, filepath.FromSlash(artifactPath)))
+		if err != nil {
+			return nil, fmt.Errorf("load profile artifact %q: %w", artifactPath, err)
+		}
+		out = append(out, Profile{
+			Key:                artifact.Key,
+			Name:               artifact.Name,
+			Description:        artifact.Description,
+			Image:              artifact.BaseImage,
+			ArtifactPath:       artifactPath,
+			SupportLevel:       artifact.Support.Level,
+			ConfigureGuarantee: artifact.ConfigureGuarantee,
+			SupportReason:      artifact.Support.Reason,
+		})
+	}
+	return out, nil
+}
+
+func repoRoot() (string, error) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("resolve registry source path")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(filename), "../../..")), nil
 }
 
 func ValidateRegistryArtifacts(repoRoot string) error {

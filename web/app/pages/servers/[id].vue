@@ -10,6 +10,15 @@ import { useServers, type StoredServer, type AgentInfo, type Service } from "~/c
 import { useJobs } from "~/composables/useJobs"
 import { useServerOptions } from "~/composables/useServerOptions"
 import { useAgentStatus } from "~/composables/useAgentStatus"
+import {
+  destructiveServerStatuses,
+  inProgressServerStatuses,
+  jobTerminalStatuses,
+  mutationBlockedServerStatuses,
+  type JobTerminalStatus,
+  type NodeStatus,
+  type ServerStatus,
+} from "~/lib/platform-contract.generated"
 
 interface ServerSection {
   key: string
@@ -60,7 +69,7 @@ const serviceActions = reactive<Record<string, ServiceActionState>>({})
 const serviceMonitors = new Map<string, ReturnType<typeof setInterval>>()
 
 const agentConnected = computed(() => agentInfo.value?.connected ?? false)
-const agentStatus = computed(() => agentInfo.value?.status ?? 'unknown')
+const agentStatus = computed<NodeStatus>(() => agentInfo.value?.status ?? 'unknown')
 
 const agentStatusLabel = computed(() => {
   switch (agentStatus.value) {
@@ -90,7 +99,7 @@ const loadServices = async () => {
   }
 }
 
-const terminalStatuses = new Set(['succeeded', 'failed'])
+const terminalStatuses = new Set<string>(jobTerminalStatuses)
 
 const setServiceAction = (serviceName: string, next: Partial<ServiceActionState>) => {
   const current = serviceActions[serviceName] || { status: 'idle', message: '' }
@@ -109,7 +118,7 @@ const monitorServiceJob = (serviceName: string, jobId: number) => {
   const monitor = setInterval(async () => {
     try {
       const job = await fetchJob(jobId)
-      if (terminalStatuses.has(job.status)) {
+      if (terminalStatuses.has(job.status as JobTerminalStatus)) {
         clearServiceMonitor(serviceName)
 
         if (job.status === 'succeeded') {
@@ -191,16 +200,22 @@ const selectSection = (key: string) => {
   isMobileSidebarOpen.value = false
 }
 
-const statusVariant = (status: string): 'success' | 'warning' | 'danger' | 'default' => {
+const statusVariant = (status: ServerStatus): 'success' | 'warning' | 'danger' | 'default' => {
   if (status === 'ready') return 'success'
   if (status === 'failed') return 'danger'
-  if (['pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(status)) return 'warning'
+  if (inProgressServerStatuses.includes(status)) return 'warning'
   return 'default'
 }
 
 const serverIsDeleted = computed(() => server.value?.status === 'deleted')
-const serverBlocksMutations = computed(() => ['deleting', 'deleted'].includes(server.value?.status || ''))
-const destructiveActionInProgress = computed(() => ['rebuilding', 'resizing', 'deleting'].includes(server.value?.status || ''))
+const serverBlocksMutations = computed(() => {
+  const status = server.value?.status
+  return status ? mutationBlockedServerStatuses.includes(status) : false
+})
+const destructiveActionInProgress = computed(() => {
+  const status = server.value?.status
+  return status ? destructiveServerStatuses.includes(status) : false
+})
 const settingsDisabled = computed(() => serverBlocksMutations.value || destructiveActionInProgress.value)
 const settingsBlockedReason = computed(() => {
   if (server.value?.status === 'deleting') return 'This server is deleting. New actions are blocked until deletion succeeds or fails.'
@@ -726,7 +741,7 @@ onUnmounted(() => {
                         :class="{
                           'bg-primary': server.status === 'ready',
                           'bg-destructive': server.status === 'failed',
-                          'bg-accent animate-pulse': ['pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(server.status),
+                          'bg-accent animate-pulse': inProgressServerStatuses.includes(server.status),
                           'bg-muted-foreground': !['ready', 'failed', 'pending', 'provisioning', 'configuring', 'rebuilding', 'resizing', 'deleting'].includes(server.status),
                         }"
                       />

@@ -39,6 +39,12 @@ func NewHandlerWithHub(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHandle
 func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHandler *NodeHandler, options HandlerOptions) http.Handler {
 	mux := http.NewServeMux()
 	operatorMux := http.NewServeMux()
+	authorize := func(handler http.Handler, allow func(auth.Actor) bool) http.Handler {
+		if options.Authenticator == nil {
+			return handler
+		}
+		return withAuthorization(handler, allow)
+	}
 
 	// Health
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -80,10 +86,10 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 			store:         provider.NewStore(db),
 			activityStore: activityStore,
 		}
-		operatorMux.HandleFunc("/api/providers", ph.route)
-		operatorMux.HandleFunc("/api/providers/", ph.routeWithID)
-		operatorMux.Handle("/api/providers/validate", withRateLimit(http.HandlerFunc(ph.handleValidate), newRateLimiter(15, time.Minute), "provider-validate"))
-		operatorMux.HandleFunc("/api/providers/types", ph.handleTypes)
+		operatorMux.Handle("/api/providers", authorize(http.HandlerFunc(ph.route), auth.CanManageProviders))
+		operatorMux.Handle("/api/providers/", authorize(http.HandlerFunc(ph.routeWithID), auth.CanManageProviders))
+		operatorMux.Handle("/api/providers/validate", authorize(withRateLimit(http.HandlerFunc(ph.handleValidate), newRateLimiter(15, time.Minute), "provider-validate"), auth.CanManageProviders))
+		operatorMux.Handle("/api/providers/types", authorize(http.HandlerFunc(ph.handleTypes), auth.CanManageProviders))
 
 		jobStore := orchestrator.NewStore(db)
 		serverStore := NewServerStore(db)
@@ -95,20 +101,20 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 			activityStore: activityStore,
 			hub:           hub,
 		}
-		operatorMux.Handle("/api/servers", withRateLimit(http.HandlerFunc(sh.route), newRateLimiter(30, time.Minute), "servers"))
-		operatorMux.Handle("/api/servers/", withRateLimit(http.HandlerFunc(sh.routeWithPath), newRateLimiter(60, time.Minute), "servers-path"))
+		operatorMux.Handle("/api/servers", authorize(withRateLimit(http.HandlerFunc(sh.route), newRateLimiter(30, time.Minute), "servers"), auth.CanManageServers))
+		operatorMux.Handle("/api/servers/", authorize(withRateLimit(http.HandlerFunc(sh.routeWithPath), newRateLimiter(60, time.Minute), "servers-path"), auth.CanManageServers))
 
 		jh := &jobsHandler{
 			store:         jobStore,
 			serverStore:   serverStore,
 			activityStore: activityStore,
 		}
-		operatorMux.Handle("/api/jobs", withRateLimit(http.HandlerFunc(jh.route), newRateLimiter(30, time.Minute), "jobs"))
-		operatorMux.HandleFunc("/api/jobs/", jh.routeWithID)
+		operatorMux.Handle("/api/jobs", authorize(withRateLimit(http.HandlerFunc(jh.route), newRateLimiter(30, time.Minute), "jobs"), auth.CanQueueJobs))
+		operatorMux.Handle("/api/jobs/", authorize(http.HandlerFunc(jh.routeWithID), auth.CanQueueJobs))
 
 		ah := &activityHandler{store: activityStore}
-		operatorMux.HandleFunc("/api/activity", ah.route)
-		operatorMux.HandleFunc("/api/activity/", ah.routeWithID)
+		operatorMux.Handle("/api/activity", authorize(http.HandlerFunc(ah.route), auth.CanReadActivity))
+		operatorMux.Handle("/api/activity/", authorize(http.HandlerFunc(ah.routeWithID), auth.CanReadActivity))
 
 		// Inject activity handler into servers handler for /api/servers/{id}/activity
 		sh.activityHandler = ah

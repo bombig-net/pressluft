@@ -1,4 +1,8 @@
 export default defineNuxtRouteMiddleware(async (to) => {
+  if (import.meta.prerender) {
+    return
+  }
+
   const { initialized, isAuthenticated, fetchMe } = useAuth()
 
   if (!initialized.value) {

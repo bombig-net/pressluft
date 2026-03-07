@@ -786,12 +786,12 @@ func (sh *serversHandler) handleListServices(w http.ResponseWriter, r *http.Requ
 }
 
 func storedAgentInfo(server StoredServer) ws.AgentInfo {
-	status := ws.AgentStatusUnknown
+	status := platform.NodeStatusUnknown
 	if server.NodeStatus != "" {
-		status = ws.AgentStatus(server.NodeStatus)
+		status = platform.NodeStatus(server.NodeStatus)
 	}
 	info := ws.AgentInfo{
-		Connected: status == ws.AgentStatusOnline,
+		Connected: status == platform.NodeStatusOnline,
 		Status:    status,
 		Version:   server.NodeVersion,
 	}

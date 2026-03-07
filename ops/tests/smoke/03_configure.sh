@@ -3,6 +3,8 @@
 set -eu
 
 . "$(dirname "$0")/common.sh"
+maybe_print_help "${1:-}"
+announce_step "03 configure verification"
 
 server_id=$(state_get server_id)
 job_id=$(state_get provision_job_id)

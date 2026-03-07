@@ -1,10 +1,12 @@
 import { ref, readonly } from 'vue'
+import type { JobKind, JobStatus, JobTerminalStatus } from '~/lib/platform-contract.generated'
+import { jobTerminalStatuses } from '~/lib/platform-contract.generated'
 
 export interface Job {
   id: number
   server_id?: number
-  kind: string
-  status: string
+  kind: JobKind
+  status: JobStatus
   current_step: string
   retry_count: number
   last_error?: string
@@ -36,7 +38,7 @@ export function useJobs() {
   const connectionMode = ref<ConnectionMode>('disconnected')
 
   const createJob = async (payload: {
-    kind?: string
+    kind?: JobKind
     server_id?: number
     payload?: Record<string, unknown> | string | null
   }) => {
@@ -102,8 +104,8 @@ export function useJobs() {
       onModeChange?.(mode)
     }
 
-    const isTerminalStatus = (status: string) =>
-      ['succeeded', 'failed'].includes(status)
+    const isTerminalStatus = (status: JobStatus) =>
+      jobTerminalStatuses.includes(status as JobTerminalStatus)
 
     // Start polling fallback
     const startPolling = () => {
@@ -168,7 +170,7 @@ export function useJobs() {
           onEvent?.(parsed)
 
           // Check for terminal events
-          if (parsed.status && isTerminalStatus(parsed.status)) {
+          if (parsed.status && isTerminalStatus(parsed.status as JobStatus)) {
             fetchJob(jobId).catch(() => {})
           }
         } catch {

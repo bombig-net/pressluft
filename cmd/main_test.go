@@ -34,33 +34,20 @@ func TestResolveAddr(t *testing.T) {
 
 func TestResolveProductionTLSConfig(t *testing.T) {
 	t.Run("requires tls files in production bootstrap", func(t *testing.T) {
-		t.Setenv("PRESSLUFT_TLS_CERT_FILE", "")
-		t.Setenv("PRESSLUFT_TLS_KEY_FILE", "")
-
-		if _, _, err := resolveProductionTLSConfig("https://control.example.test"); err == nil {
+		if err := resolveProductionTLSConfig("https://control.example.test", "", ""); err == nil {
 			t.Fatal("expected missing TLS files to fail")
 		}
 	})
 
 	t.Run("requires https control plane url", func(t *testing.T) {
-		t.Setenv("PRESSLUFT_TLS_CERT_FILE", "/tmp/control.crt")
-		t.Setenv("PRESSLUFT_TLS_KEY_FILE", "/tmp/control.key")
-
-		if _, _, err := resolveProductionTLSConfig("http://control.example.test"); err == nil {
+		if err := resolveProductionTLSConfig("http://control.example.test", "/tmp/control.crt", "/tmp/control.key"); err == nil {
 			t.Fatal("expected non-https control plane URL to fail")
 		}
 	})
 
-	t.Run("returns configured tls files", func(t *testing.T) {
-		t.Setenv("PRESSLUFT_TLS_CERT_FILE", "/tmp/control.crt")
-		t.Setenv("PRESSLUFT_TLS_KEY_FILE", "/tmp/control.key")
-
-		cert, key, err := resolveProductionTLSConfig("https://control.example.test")
-		if err != nil {
+	t.Run("accepts configured tls files", func(t *testing.T) {
+		if err := resolveProductionTLSConfig("https://control.example.test", "/tmp/control.crt", "/tmp/control.key"); err != nil {
 			t.Fatalf("resolveProductionTLSConfig() error = %v", err)
-		}
-		if cert != "/tmp/control.crt" || key != "/tmp/control.key" {
-			t.Fatalf("resolveProductionTLSConfig() = (%q, %q), want configured paths", cert, key)
 		}
 	})
 }
@@ -76,9 +63,7 @@ func TestResolveAnsibleBinary(t *testing.T) {
 		if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatalf("WriteFile() error = %v", err)
 		}
-		t.Setenv("PRESSLUFT_ANSIBLE_BIN", "")
-
-		resolved, err := resolveAnsibleBinary(root)
+		resolved, err := resolveAnsibleBinary(filepath.Join(".venv", "bin", "ansible-playbook"), root)
 		if err != nil {
 			t.Fatalf("resolveAnsibleBinary() error = %v", err)
 		}
@@ -88,7 +73,7 @@ func TestResolveAnsibleBinary(t *testing.T) {
 	})
 
 	t.Run("rejects missing binary", func(t *testing.T) {
-		if _, err := resolveAnsibleBinary(t.TempDir()); err == nil {
+		if _, err := resolveAnsibleBinary(filepath.Join(".venv", "bin", "ansible-playbook"), t.TempDir()); err == nil {
 			t.Fatal("expected missing ansible-playbook to fail")
 		}
 	})

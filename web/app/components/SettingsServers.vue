@@ -25,6 +25,13 @@ import { useProviders } from "~/composables/useProviders"
 import { useServers, type ServerTypePrice } from "~/composables/useServers"
 import { useAllAgentStatus } from "~/composables/useAgentStatus"
 import type { Job } from "~/composables/useJobs"
+import {
+  inProgressServerStatuses,
+  mutationBlockedServerStatuses,
+  type CallbackURLMode,
+  type ServerStatus,
+  type SetupState,
+} from "~/lib/platform-contract.generated"
 
 const modal = useModal()
 
@@ -42,7 +49,7 @@ const {
 } = useServers()
 
 const { getStatusType, isConnected } = useAllAgentStatus({ pollInterval: 15000 })
-const callbackMode = ref<"unknown" | "stable" | "ephemeral">("unknown")
+const callbackMode = ref<CallbackURLMode>("unknown")
 const callbackWarning = ref("")
 
 // Delete confirmation state
@@ -299,17 +306,17 @@ const formatDate = (iso: string): string => {
   }
 }
 
-const statusBadgeClass = (status: string): string => {
+const statusBadgeClass = (status: ServerStatus): string => {
   if (status === "ready") return "border-primary/30 bg-primary/10 text-primary"
   if (status === "failed") return "border-destructive/30 bg-destructive/10 text-destructive"
-  if (["pending", "provisioning", "configuring", "rebuilding", "resizing", "deleting"].includes(status)) {
+  if (inProgressServerStatuses.includes(status)) {
     return "border-accent/30 bg-accent/10 text-accent"
   }
   if (status === "deleted") return "border-border/60 bg-muted/60 text-muted-foreground"
   return "border-border/60 bg-muted/60 text-foreground"
 }
 
-const setupBadgeClass = (setupState?: string): string => {
+const setupBadgeClass = (setupState?: SetupState): string => {
   if (setupState === "ready") return "border-primary/30 bg-primary/10 text-primary"
   if (setupState === "degraded") return "border-destructive/30 bg-destructive/10 text-destructive"
   if (setupState === "running") return "border-accent/30 bg-accent/10 text-accent"
@@ -457,7 +464,7 @@ const handleDialogUpdate = (value: boolean) => {
               'text-muted-foreground hover:bg-destructive/10 hover:text-destructive',
               !['failed', 'ready'].includes(server.status) && 'opacity-0 group-hover:opacity-100',
             )"
-            :disabled="['deleting', 'deleted'].includes(server.status)"
+            :disabled="mutationBlockedServerStatuses.includes(server.status)"
             title="Delete server"
             @click.prevent="confirmDelete(server.id)"
           >

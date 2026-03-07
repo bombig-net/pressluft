@@ -22,6 +22,7 @@ import (
 	"pressluft/internal/auth"
 	"pressluft/internal/database"
 	"pressluft/internal/dispatch"
+	"pressluft/internal/envconfig"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/pki"
 	"pressluft/internal/platform"
@@ -43,27 +44,24 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	executionMode, err := platform.NormalizeControlPlaneExecutionMode(os.Getenv("PRESSLUFT_EXECUTION_MODE"), isDevBuild())
+	cwd, _ := os.Getwd()
+	runtimeConfig, err := envconfig.ResolveControlPlaneRuntime(isDevBuild(), cwd)
 	if err != nil {
-		log.Fatalf("resolve execution mode: %v", err)
+		log.Fatalf("resolve control-plane config: %v", err)
 	}
+	executionMode := runtimeConfig.ExecutionMode
 	logExecutionMode(logger, executionMode)
 
-	ageKeyPath := strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH"))
-	allowGenerate := false
-	if ageKeyPath == "" {
-		ageKeyPath = security.DefaultAgeKeyPath()
-		allowGenerate = true
-	}
-	generated, err := security.EnsureAgeKey(ageKeyPath, allowGenerate)
+	allowGenerate := strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH")) == ""
+	generated, err := security.EnsureAgeKey(runtimeConfig.AgeKeyPath, allowGenerate)
 	if err != nil {
 		log.Fatalf("ensure age key: %v", err)
 	}
 	if generated {
-		logger.Info("age key generated", "path", ageKeyPath)
+		logger.Info("age key generated", "path", runtimeConfig.AgeKeyPath)
 	}
 
-	db, err := database.Open(resolveDBPath(), logger)
+	db, err := database.Open(runtimeConfig.DBPath, logger)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
@@ -78,23 +76,17 @@ func main() {
 	pkiStore := pki.NewStore(db.DB)
 	registrationStore := registration.NewStore(db.DB)
 	authStore := auth.NewStore(db.DB)
-	ca, err := pki.LoadOrCreateCA(db.DB, ageKeyPath, resolveCAKeyPath())
+	ca, err := pki.LoadOrCreateCA(db.DB, runtimeConfig.AgeKeyPath, runtimeConfig.CAKeyPath)
 	if err != nil {
 		log.Fatalf("load or create CA: %v", err)
 	}
-	sessionSecretPath := strings.TrimSpace(os.Getenv("PRESSLUFT_SESSION_KEY_PATH"))
-	sessionSecret, resolvedSessionSecretPath, err := auth.LoadSessionSecret(sessionSecretPath)
+	sessionSecret, resolvedSessionSecretPath, err := auth.LoadSessionSecret(runtimeConfig.SessionSecretPath)
 	if err != nil {
 		log.Fatalf("load session secret: %v", err)
 	}
 	logger.Info("session secret ready", "path", resolvedSessionSecretPath)
 
-	idleTimeout, absoluteTimeout, err := resolveSessionTimeouts()
-	if err != nil {
-		log.Fatalf("resolve session timeouts: %v", err)
-	}
-	secureSessionCookies := resolveSecureSessionCookies(executionMode)
-	authService := auth.NewService(authStore, sessionSecret, idleTimeout, absoluteTimeout, secureSessionCookies)
+	authService := auth.NewService(authStore, sessionSecret, runtimeConfig.SessionIdleTimeout, runtimeConfig.SessionAbsoluteTimeout, runtimeConfig.SessionCookieSecure)
 
 	bootstrapEmail, bootstrapPassword, err := auth.BootstrapCredentials(executionMode)
 	if err != nil && executionMode != platform.ExecutionModeDev {
@@ -117,19 +109,11 @@ func main() {
 		})
 	}
 
-	ansibleDir := strings.TrimSpace(os.Getenv("PRESSLUFT_ANSIBLE_DIR"))
-	if ansibleDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			ansibleDir = cwd
-		} else {
-			ansibleDir = "."
-		}
-	}
-	ansibleBinary, err := resolveAnsibleBinary(ansibleDir)
+	ansibleBinary, err := resolveAnsibleBinary(runtimeConfig.AnsibleBinary, runtimeConfig.AnsibleDir)
 	if err != nil {
 		log.Fatalf("resolve ansible binary: %v", err)
 	}
-	if err := logAnsibleVersion(ansibleBinary, ansibleDir, logger); err != nil {
+	if err := logAnsibleVersion(ansibleBinary, runtimeConfig.AnsibleDir, logger); err != nil {
 		log.Fatalf("ansible preflight failed: %v", err)
 	}
 	playbookPath := "ops/ansible/playbooks/provision.yml"
@@ -140,7 +124,7 @@ func main() {
 	firewallsPlaybookPath := "ops/ansible/playbooks/update_firewalls.yml"
 	volumePlaybookPath := "ops/ansible/playbooks/manage_volume.yml"
 
-	controlPlaneURL := strings.TrimSpace(os.Getenv("PRESSLUFT_CONTROL_PLANE_URL"))
+	controlPlaneURL := runtimeConfig.ControlPlaneURL
 	if executionMode == platform.ExecutionModeDev && platform.DetectCallbackURLMode(controlPlaneURL) == platform.CallbackURLModeEphemeral {
 		logger.Warn("ephemeral dev callback URL detected",
 			"control_plane_url", controlPlaneURL,
@@ -151,7 +135,7 @@ func main() {
 		log.Fatalf("backfill provider tokens: %v", err)
 	}
 
-	ansibleRunner := ansible.NewAdapter(ansibleBinary, ansibleDir, []string{
+	ansibleRunner := ansible.NewAdapter(ansibleBinary, runtimeConfig.AnsibleDir, []string{
 		playbookPath,
 		configurePlaybookPath,
 		deletePlaybookPath,
@@ -226,8 +210,7 @@ func main() {
 		return httpServer.ListenAndServe()
 	}
 	if executionMode == platform.ExecutionModeProductionBootstrap {
-		tlsCertFile, tlsKeyFile, err := resolveProductionTLSConfig(controlPlaneURL)
-		if err != nil {
+		if err := resolveProductionTLSConfig(controlPlaneURL, runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile); err != nil {
 			log.Fatalf("resolve production TLS config: %v", err)
 		}
 		httpServer.TLSConfig = &tls.Config{
@@ -236,7 +219,7 @@ func main() {
 			ClientCAs:  ca.CertPool(),
 		}
 		listenAndServe = func() error {
-			return httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+			return httpServer.ListenAndServeTLS(runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile)
 		}
 	}
 
@@ -268,9 +251,7 @@ func main() {
 func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
 	logger.Info("platform contract loaded",
 		"execution_mode", mode,
-		"contract_ref", "README.md#platform-contract",
-		"lifecycle_note", "docs/internal/lifecycle-state-semantics.md",
-		"glossary", "docs/glossary.md",
+		"contract_package", "pressluft/internal/contract",
 	)
 
 	switch mode {
@@ -294,36 +275,7 @@ func resolveAddr() string {
 	return ":" + port
 }
 
-func resolveDBPath() string {
-	if p := os.Getenv("PRESSLUFT_DB"); p != "" {
-		return p
-	}
-
-	dataDir := resolveDataDir()
-	return filepath.Join(dataDir, "pressluft", "pressluft.db")
-}
-
-func resolveDataDir() string {
-	dataDir := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".local", "share")
-	}
-	return dataDir
-}
-
-func resolveCAKeyPath() string {
-	if p := strings.TrimSpace(os.Getenv("PRESSLUFT_CA_KEY_PATH")); p != "" {
-		return p
-	}
-	return filepath.Join(resolveDataDir(), "pressluft", "ca.key")
-}
-
-func resolveAnsibleBinary(ansibleDir string) (string, error) {
-	ansibleBinary := strings.TrimSpace(os.Getenv("PRESSLUFT_ANSIBLE_BIN"))
-	if ansibleBinary == "" {
-		ansibleBinary = filepath.Join(ansibleDir, ".venv", "bin", "ansible-playbook")
-	}
+func resolveAnsibleBinary(ansibleBinary, ansibleDir string) (string, error) {
 	if !filepath.IsAbs(ansibleBinary) {
 		ansibleBinary = filepath.Join(ansibleDir, ansibleBinary)
 	}
@@ -367,45 +319,16 @@ func logAnsibleVersion(binaryPath, workingDir string, logger *slog.Logger) error
 	return nil
 }
 
-func resolveProductionTLSConfig(controlPlaneURL string) (string, string, error) {
-	tlsCertFile := strings.TrimSpace(os.Getenv("PRESSLUFT_TLS_CERT_FILE"))
-	tlsKeyFile := strings.TrimSpace(os.Getenv("PRESSLUFT_TLS_KEY_FILE"))
-	if tlsCertFile == "" || tlsKeyFile == "" {
-		return "", "", fmt.Errorf("PRESSLUFT_TLS_CERT_FILE and PRESSLUFT_TLS_KEY_FILE are required in production-bootstrap mode")
+func resolveProductionTLSConfig(controlPlaneURL, tlsCertFile, tlsKeyFile string) error {
+	if strings.TrimSpace(tlsCertFile) == "" || strings.TrimSpace(tlsKeyFile) == "" {
+		return fmt.Errorf("PRESSLUFT_TLS_CERT_FILE and PRESSLUFT_TLS_KEY_FILE are required in production-bootstrap mode")
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(controlPlaneURL))
 	if err != nil {
-		return "", "", fmt.Errorf("parse PRESSLUFT_CONTROL_PLANE_URL: %w", err)
+		return fmt.Errorf("parse PRESSLUFT_CONTROL_PLANE_URL: %w", err)
 	}
 	if parsedURL.Scheme != "https" || parsedURL.Host == "" {
-		return "", "", fmt.Errorf("PRESSLUFT_CONTROL_PLANE_URL must be an https URL in production-bootstrap mode")
+		return fmt.Errorf("PRESSLUFT_CONTROL_PLANE_URL must be an https URL in production-bootstrap mode")
 	}
-	return tlsCertFile, tlsKeyFile, nil
-}
-
-func resolveSessionTimeouts() (time.Duration, time.Duration, error) {
-	idle := auth.DefaultSessionIdleTimeout
-	absolute := auth.DefaultSessionAbsoluteTimeout
-	if raw := strings.TrimSpace(os.Getenv("PRESSLUFT_SESSION_IDLE_TIMEOUT")); raw != "" {
-		parsed, err := time.ParseDuration(raw)
-		if err != nil {
-			return 0, 0, fmt.Errorf("parse PRESSLUFT_SESSION_IDLE_TIMEOUT: %w", err)
-		}
-		idle = parsed
-	}
-	if raw := strings.TrimSpace(os.Getenv("PRESSLUFT_SESSION_ABSOLUTE_TIMEOUT")); raw != "" {
-		parsed, err := time.ParseDuration(raw)
-		if err != nil {
-			return 0, 0, fmt.Errorf("parse PRESSLUFT_SESSION_ABSOLUTE_TIMEOUT: %w", err)
-		}
-		absolute = parsed
-	}
-	return idle, absolute, nil
-}
-
-func resolveSecureSessionCookies(mode platform.ExecutionMode) bool {
-	if raw := strings.TrimSpace(os.Getenv("PRESSLUFT_SESSION_COOKIE_SECURE")); raw != "" {
-		return raw == "1" || strings.EqualFold(raw, "true")
-	}
-	return mode == platform.ExecutionModeProductionBootstrap
+	return nil
 }

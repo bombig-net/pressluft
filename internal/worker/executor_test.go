@@ -168,8 +168,8 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 	if got := serverStore.servers[1].Status; got != string(platform.ServerStatusFailed) {
 		t.Fatalf("server status = %q, want %q", got, platform.ServerStatusFailed)
 	}
-	if len(runner.requests) != 1 {
-		t.Fatalf("runner request count = %d, want 1", len(runner.requests))
+	if len(runner.requests) != 0 {
+		t.Fatalf("runner request count = %d, want 0", len(runner.requests))
 	}
 }
 

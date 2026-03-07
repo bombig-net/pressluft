@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"pressluft/internal/observability"
+	"pressluft/internal/platform"
 )
 
 type ServerStore interface {
@@ -25,8 +26,8 @@ func NewMonitor(hub *Hub, store ServerStore, logger *slog.Logger) *Monitor {
 	return &Monitor{
 		hub:                hub,
 		store:              store,
-		unhealthyThreshold: 45 * time.Second,
-		offlineThreshold:   150 * time.Second,
+		unhealthyThreshold: time.Duration(platform.NodeUnhealthyThresholdSeconds) * time.Second,
+		offlineThreshold:   time.Duration(platform.NodeOfflineThresholdSeconds) * time.Second,
 		logger:             logger,
 	}
 }
@@ -54,16 +55,16 @@ func (m *Monitor) checkConnections() {
 		version := conn.Version()
 
 		if elapsed > m.offlineThreshold {
-			m.logger.Info("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", AgentStatusOffline, "reason", "heartbeat_timeout", "elapsed", elapsed)...)
+			m.logger.Info("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", platform.NodeStatusOffline, "reason", "heartbeat_timeout", "elapsed", elapsed)...)
 			if m.store != nil {
-				_ = m.store.UpdateNodeStatus(context.Background(), serverID, "offline", lastSeen.UTC().Format(time.RFC3339), version)
+				_ = m.store.UpdateNodeStatus(context.Background(), serverID, string(platform.NodeStatusOffline), lastSeen.UTC().Format(time.RFC3339), version)
 			}
 			conn.Close()
 			m.hub.Unregister(serverID)
 		} else if elapsed > m.unhealthyThreshold {
-			m.logger.Debug("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", AgentStatusUnhealthy, "reason", "heartbeat_degraded", "elapsed", elapsed)...)
+			m.logger.Debug("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", platform.NodeStatusUnhealthy, "reason", "heartbeat_degraded", "elapsed", elapsed)...)
 			if m.store != nil {
-				_ = m.store.UpdateNodeStatus(context.Background(), serverID, "unhealthy", lastSeen.UTC().Format(time.RFC3339), version)
+				_ = m.store.UpdateNodeStatus(context.Background(), serverID, string(platform.NodeStatusUnhealthy), lastSeen.UTC().Format(time.RFC3339), version)
 			}
 		}
 

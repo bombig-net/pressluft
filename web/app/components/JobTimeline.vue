@@ -5,6 +5,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { useJobs, type Job, type JobEvent, type ConnectionMode } from "~/composables/useJobs"
+import {
+  jobKindLabels,
+  jobTerminalStatuses,
+  type JobKind,
+  type JobTerminalStatus,
+  type JobStatus,
+} from "~/lib/platform-contract.generated"
 
 interface Props {
   jobId: number
@@ -122,7 +129,7 @@ const steps = computed<TimelineStep[]>(() => {
 
 const jobKindLabel = computed(() => {
   const kind = activeJob.value?.kind
-  return kind ? kind.replace(/_/g, " ") : ""
+  return kind ? jobKindLabels[kind as JobKind] || kind : ""
 })
 
 function formatPayloadValue(value: unknown): string {
@@ -164,7 +171,7 @@ const jobStartedAt = computed(() => {
 
 const isTerminal = computed(() => {
   const status = activeJob.value?.status
-  return status === "succeeded" || status === "failed"
+  return status ? jobTerminalStatuses.includes(status as JobTerminalStatus) : false
 })
 
 // Format timestamp to readable time
@@ -180,7 +187,7 @@ function formatTime(iso: string): string {
   }
 }
 
-function statusBadgeClass(status: string) {
+function statusBadgeClass(status: JobStatus | "unknown") {
   switch (status) {
     case "succeeded":
       return "border-primary/30 bg-primary/10 text-primary"
@@ -238,8 +245,7 @@ async function retryLoad() {
     const job = await fetchJob(props.jobId)
 
     // Check if job is already in terminal state (historical view)
-    const terminalStatuses = ["succeeded", "failed"]
-    if (terminalStatuses.includes(job.status)) {
+    if (jobTerminalStatuses.includes(job.status as JobTerminalStatus)) {
       isHistoricalView.value = true
       await fetchJobEvents(props.jobId)
       loading.value = false
@@ -262,8 +268,7 @@ onMounted(async () => {
     const job = await fetchJob(props.jobId)
 
     // Check if job is already in terminal state (historical view)
-    const terminalStatuses = ["succeeded", "failed"]
-    if (terminalStatuses.includes(job.status)) {
+    if (jobTerminalStatuses.includes(job.status as JobTerminalStatus)) {
       // Historical view: fetch all events at once, no streaming
       isHistoricalView.value = true
       await fetchJobEvents(props.jobId)

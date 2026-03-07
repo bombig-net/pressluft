@@ -1,10 +1,14 @@
 import { ref, readonly } from 'vue'
+import type { JobStatus, NodeStatus, ServerStatus, SetupState, SupportLevel } from '~/lib/platform-contract.generated'
 
 export interface ServerProfile {
   key: string
   name: string
   description: string
   artifact_path: string
+  support_level: SupportLevel
+  configure_guarantee: string
+  support_reason?: string
 }
 
 export interface ServerLocation {
@@ -48,8 +52,8 @@ export interface StoredServer {
   server_type: string
   image: string
   profile_key: string
-  status: string
-  setup_state: string
+  status: ServerStatus
+  setup_state: SetupState
   setup_last_error?: string
   action_id?: string
   action_status?: string
@@ -60,7 +64,7 @@ export interface StoredServer {
   updated_at: string
 }
 
-export type AgentStatusType = 'online' | 'unhealthy' | 'offline' | 'unknown'
+export type AgentStatusType = NodeStatus
 
 export interface AgentInfo {
   connected: boolean
@@ -96,14 +100,14 @@ export interface CreateServerInput {
 export interface CreateServerResponse {
   server_id: number
   job_id: number
-  status: string
+  status: ServerStatus
 }
 
 export interface DeleteServerResponse {
   server_id: number
   job_id: number
-  status: string
-  job_status: string
+  status: ServerStatus
+  job_status: JobStatus
   async: boolean
   description: string
 }

@@ -27,6 +27,8 @@ type ServerStatus string
 
 type SetupState string
 
+type NodeStatus string
+
 const (
 	ServerStatusPending      ServerStatus = "pending"
 	ServerStatusProvisioning ServerStatus = "provisioning"
@@ -46,6 +48,18 @@ const (
 	SetupStateReady      SetupState = "ready"
 )
 
+const (
+	NodeStatusOnline    NodeStatus = "online"
+	NodeStatusUnhealthy NodeStatus = "unhealthy"
+	NodeStatusOffline   NodeStatus = "offline"
+	NodeStatusUnknown   NodeStatus = "unknown"
+)
+
+const (
+	NodeUnhealthyThresholdSeconds = 45
+	NodeOfflineThresholdSeconds   = 150
+)
+
 type CallbackURLMode string
 
 const (
@@ -53,6 +67,95 @@ const (
 	CallbackURLModeStable    CallbackURLMode = "stable"
 	CallbackURLModeEphemeral CallbackURLMode = "ephemeral"
 )
+
+func AllExecutionModes() []ExecutionMode {
+	return []ExecutionMode{
+		ExecutionModeDev,
+		ExecutionModeSingleNodeLocal,
+		ExecutionModeProductionBootstrap,
+	}
+}
+
+func AllSupportLevels() []SupportLevel {
+	return []SupportLevel{
+		SupportLevelSupported,
+		SupportLevelExperimental,
+		SupportLevelUnavailable,
+	}
+}
+
+func AllServerStatuses() []ServerStatus {
+	return []ServerStatus{
+		ServerStatusPending,
+		ServerStatusProvisioning,
+		ServerStatusConfiguring,
+		ServerStatusRebuilding,
+		ServerStatusResizing,
+		ServerStatusDeleting,
+		ServerStatusDeleted,
+		ServerStatusReady,
+		ServerStatusFailed,
+	}
+}
+
+func InProgressServerStatuses() []ServerStatus {
+	return []ServerStatus{
+		ServerStatusPending,
+		ServerStatusProvisioning,
+		ServerStatusConfiguring,
+		ServerStatusRebuilding,
+		ServerStatusResizing,
+		ServerStatusDeleting,
+	}
+}
+
+func MutationBlockedServerStatuses() []ServerStatus {
+	return []ServerStatus{
+		ServerStatusDeleting,
+		ServerStatusDeleted,
+	}
+}
+
+func DestructiveActionServerStatuses() []ServerStatus {
+	return []ServerStatus{
+		ServerStatusRebuilding,
+		ServerStatusResizing,
+		ServerStatusDeleting,
+	}
+}
+
+func AllSetupStates() []SetupState {
+	return []SetupState{
+		SetupStateNotStarted,
+		SetupStateRunning,
+		SetupStateDegraded,
+		SetupStateReady,
+	}
+}
+
+func AllNodeStatuses() []NodeStatus {
+	return []NodeStatus{
+		NodeStatusOnline,
+		NodeStatusUnhealthy,
+		NodeStatusOffline,
+		NodeStatusUnknown,
+	}
+}
+
+func ReachableNodeStatuses() []NodeStatus {
+	return []NodeStatus{
+		NodeStatusOnline,
+		NodeStatusUnhealthy,
+	}
+}
+
+func AllCallbackURLModes() []CallbackURLMode {
+	return []CallbackURLMode{
+		CallbackURLModeUnknown,
+		CallbackURLModeStable,
+		CallbackURLModeEphemeral,
+	}
+}
 
 func QueuedServerStatusForJobKind(kind string) (ServerStatus, bool) {
 	switch strings.TrimSpace(kind) {

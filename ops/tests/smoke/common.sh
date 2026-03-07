@@ -18,8 +18,35 @@ require_env() {
   eval "var_value=\${$var_name:-}"
   if [ -z "$var_value" ]; then
     printf '%s\n' "$var_name is required" >&2
+    print_smoke_env_help >&2
     exit 1
   fi
+}
+
+print_smoke_env_help() {
+  printf '%s\n' 'Smoke environment contract:'
+  printf '%s\n' '  PRESSLUFT_API_BASE            Required control-plane base URL'
+  printf '%s\n' '  PRESSLUFT_HETZNER_API_TOKEN   Required disposable Hetzner token'
+  printf '%s\n' '  PRESSLUFT_PROVIDER_NAME       Optional, defaults to hetzner-smoke'
+  printf '%s\n' '  PRESSLUFT_SERVER_NAME         Optional, defaults to pressluft-smoke'
+  printf '%s\n' '  PRESSLUFT_SERVER_LOCATION     Optional, defaults to nbg1'
+  printf '%s\n' '  PRESSLUFT_SERVER_TYPE         Optional, defaults to cx22'
+  printf '%s\n' '  PRESSLUFT_PROFILE_KEY         Optional, defaults to nginx-stack'
+  printf '%s\n' '  PRESSLUFT_RESTART_SERVICE     Optional, defaults to nginx'
+  printf '%s\n' '  PRESSLUFT_SMOKE_STATE_DIR     Optional state directory'
+}
+
+maybe_print_help() {
+  case "${1:-}" in
+    -h|--help|help)
+      print_smoke_env_help
+      exit 0
+      ;;
+  esac
+}
+
+announce_step() {
+  printf '==> %s\n' "$1"
 }
 
 require_api_base() {

@@ -12,11 +12,11 @@ import (
 )
 
 type HandlerOptions struct {
-	Authenticator auth.Authenticator
-	AuthService   *auth.Service
-	ActivityStore ActivityEmitter
-	Logger        loggerLike
-	IsDev         bool
+	Authenticator   auth.Authenticator
+	AuthService     *auth.Service
+	ActivityStore   ActivityEmitter
+	Logger          loggerLike
+	IsDev           bool
 	ControlPlaneURL string
 }
 
@@ -54,6 +54,20 @@ func withOptionalActor(next http.Handler, authenticator auth.Authenticator) http
 		}
 		if actor.IsAuthenticated() {
 			r = r.WithContext(auth.ContextWithActor(r.Context(), actor))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withAuthorization(next http.Handler, allow func(auth.Actor) bool) http.Handler {
+	if allow == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		actor := auth.ActorFromContext(r.Context())
+		if !allow(actor) {
+			respondError(w, http.StatusForbidden, "forbidden")
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

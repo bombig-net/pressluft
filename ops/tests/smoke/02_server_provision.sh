@@ -3,6 +3,8 @@
 set -eu
 
 . "$(dirname "$0")/common.sh"
+maybe_print_help "${1:-}"
+announce_step "02 server provision"
 
 provider_id=$(state_get provider_id)
 if [ -z "$provider_id" ]; then

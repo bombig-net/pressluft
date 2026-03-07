@@ -3,6 +3,8 @@
 set -eu
 
 . "$(dirname "$0")/common.sh"
+maybe_print_help "${1:-}"
+announce_step "06 delete server"
 
 server_id=$(state_get server_id)
 if [ -z "$server_id" ]; then
