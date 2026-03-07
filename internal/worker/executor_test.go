@@ -75,25 +75,9 @@ func TestExecutorDeleteServerFailureLeavesRecoverableStatus(t *testing.T) {
 func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
-	privateKey := []byte("dummy-private-key")
-	keyPath := filepath.Join(t.TempDir(), "age.txt")
-	os.Setenv("PRESSLUFT_AGE_KEY_PATH", keyPath)
-	t.Cleanup(func() { _ = os.Unsetenv("PRESSLUFT_AGE_KEY_PATH") })
-	if _, err := security.EnsureAgeKey(keyPath, true); err != nil {
-		t.Fatalf("ensure age key: %v", err)
-	}
-	encrypted, keyID, err := security.Encrypt(privateKey)
-	if err != nil {
-		t.Fatalf("encrypt private key: %v", err)
-	}
-	mustCreateTestAgentBinary(t)
-
 	serverStore := &fakeServerStore{
 		servers: map[int64]*StoredServer{
 			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "nginx-stack", Image: "ubuntu-22.04", IPv4: "203.0.113.10", Status: string(platform.ServerStatusRebuilding)},
-		},
-		keys: map[int64]*StoredServerKey{
-			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
 		},
 	}
 	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
@@ -102,8 +86,6 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 		RebuildPlaybookPath:   "rebuild.yml",
 		ConfigurePlaybookPath: "configure.yml",
 		ControlPlaneURL:       "https://control.example.test",
-		ExecutionMode:         platform.ExecutionModeProductionBootstrap,
-		RegistrationStore:     fakeRegistrationStore{},
 	}, logger)
 
 	job := mustClaimExecutorJob(t, jobStore, orchestrator.CreateJobInput{
@@ -116,17 +98,27 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	}
 
 	server := serverStore.servers[1]
-	if server.Status != string(platform.ServerStatusReady) {
-		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusReady)
+	if server.Status != string(platform.ServerStatusConfiguring) {
+		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusConfiguring)
+	}
+	if server.SetupState != string(platform.SetupStateRunning) {
+		t.Fatalf("setup state = %q, want %q", server.SetupState, platform.SetupStateRunning)
 	}
 	if server.Image != "ubuntu-24.04" {
 		t.Fatalf("server image = %q, want %q", server.Image, "ubuntu-24.04")
 	}
-	if len(runner.requests) != 2 {
-		t.Fatalf("runner request count = %d, want 2", len(runner.requests))
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner request count = %d, want 1", len(runner.requests))
 	}
-	if runner.requests[1].PlaybookPath != "configure.yml" {
-		t.Fatalf("second playbook = %q, want %q", runner.requests[1].PlaybookPath, "configure.yml")
+	jobs, err := jobStore.ListJobsByServer(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("list jobs by server: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("job count = %d, want 2", len(jobs))
+	}
+	if jobs[0].Kind != string(orchestrator.JobKindConfigureServer) && jobs[1].Kind != string(orchestrator.JobKindConfigureServer) {
+		t.Fatalf("expected configure_server job in %+v", jobs)
 	}
 }
 
@@ -211,6 +203,61 @@ func TestExecutorResizeServerFailureMarksFailed(t *testing.T) {
 	}
 }
 
+func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
+	jobStore := mustOpenExecutorJobStore(t)
+	logger := testLogger()
+	privateKey := []byte("dummy-private-key")
+	keyPath := filepath.Join(t.TempDir(), "age.txt")
+	os.Setenv("PRESSLUFT_AGE_KEY_PATH", keyPath)
+	t.Cleanup(func() { _ = os.Unsetenv("PRESSLUFT_AGE_KEY_PATH") })
+	if _, err := security.EnsureAgeKey(keyPath, true); err != nil {
+		t.Fatalf("ensure age key: %v", err)
+	}
+	encrypted, keyID, err := security.Encrypt(privateKey)
+	if err != nil {
+		t.Fatalf("encrypt private key: %v", err)
+	}
+	mustCreateTestAgentBinary(t)
+
+	serverStore := &fakeServerStore{
+		servers: map[int64]*StoredServer{
+			1: {ID: 1, ProviderID: 11, Name: "setup-me", ProfileKey: "nginx-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: string(platform.ServerStatusConfiguring), SetupState: string(platform.SetupStateRunning)},
+		},
+		keys: map[int64]*StoredServerKey{
+			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
+		},
+	}
+	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
+	runner := &fakeRunner{failPlaybooks: map[string]error{"configure.yml": errors.New("configure failed")}}
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+		ConfigurePlaybookPath: "configure.yml",
+		ControlPlaneURL:       "http://control.example.test",
+		ExecutionMode:         platform.ExecutionModeDev,
+		DevTokenStore:         fakeDevTokenStore{},
+	}, logger)
+
+	job := mustClaimExecutorJob(t, jobStore, orchestrator.CreateJobInput{
+		Kind:     string(orchestrator.JobKindConfigureServer),
+		ServerID: 1,
+		Payload:  `{"ipv4":"203.0.113.10"}`,
+	})
+	err = executor.Execute(context.Background(), &job)
+	if err == nil {
+		t.Fatal("expected configure to fail")
+	}
+
+	server := serverStore.servers[1]
+	if server.Status != string(platform.ServerStatusConfiguring) {
+		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusConfiguring)
+	}
+	if server.SetupState != string(platform.SetupStateDegraded) {
+		t.Fatalf("setup state = %q, want %q", server.SetupState, platform.SetupStateDegraded)
+	}
+	if server.SetupLastError == "" {
+		t.Fatal("expected setup last error to be recorded")
+	}
+}
+
 type fakeServerStore struct {
 	servers map[int64]*StoredServer
 	keys    map[int64]*StoredServerKey
@@ -227,6 +274,12 @@ func (s *fakeServerStore) GetByID(_ context.Context, id int64) (*StoredServer, e
 
 func (s *fakeServerStore) UpdateStatus(_ context.Context, id int64, status string) error {
 	s.servers[id].Status = status
+	return nil
+}
+
+func (s *fakeServerStore) UpdateSetupState(_ context.Context, id int64, setupState, setupLastError string) error {
+	s.servers[id].SetupState = setupState
+	s.servers[id].SetupLastError = setupLastError
 	return nil
 }
 
@@ -268,6 +321,12 @@ func (s *fakeServerStore) CreateKey(_ context.Context, in CreateServerKeyInput) 
 
 type fakeProviderStore struct {
 	provider *StoredProvider
+}
+
+type fakeDevTokenStore struct{}
+
+func (fakeDevTokenStore) Create(serverID int64, expiresIn time.Duration) (string, error) {
+	return "dev-token", nil
 }
 
 func (s *fakeProviderStore) GetByID(context.Context, int64) (*StoredProvider, error) {

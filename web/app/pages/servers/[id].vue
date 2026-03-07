@@ -225,6 +225,7 @@ const rebuildState = reactive({ loading: false, error: "", success: "" })
 const resizeState = reactive({ loading: false, error: "", success: "" })
 const firewallsState = reactive({ loading: false, error: "", success: "" })
 const volumeStateUi = reactive({ loading: false, error: "", success: "" })
+const setupRetryState = reactive({ loading: false, error: "", success: "" })
 
 const controlClass = "w-full rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 
@@ -435,6 +436,33 @@ const formatDate = (iso: string): string => {
   }
 }
 
+const setupVariant = (setupState: string): 'success' | 'warning' | 'danger' | 'default' => {
+  if (setupState === 'ready') return 'success'
+  if (setupState === 'degraded') return 'danger'
+  if (setupState === 'running') return 'warning'
+  return 'default'
+}
+
+const retrySetup = async () => {
+  if (!serverId.value) return
+  setupRetryState.loading = true
+  setupRetryState.error = ""
+  setupRetryState.success = ""
+  try {
+    const job = await createJob({
+      kind: "configure_server",
+      server_id: serverId.value,
+      payload: {},
+    })
+    setupRetryState.success = `Setup job #${job.id} queued`
+    await refreshServer()
+  } catch (e: any) {
+    setupRetryState.error = e.message || "Failed to queue setup retry"
+  } finally {
+    setupRetryState.loading = false
+  }
+}
+
 const refreshServer = async () => {
   if (!serverId.value) return
   server.value = await fetchServer(serverId.value)
@@ -450,8 +478,7 @@ onMounted(async () => {
   try {
     await refreshServer()
     await fetchServerOptions(serverId.value)
-    // Start agent status polling if server is ready
-    if (server.value?.status === 'ready') {
+    if (server.value?.setup_state === 'ready') {
       startAgentPolling()
       loadServices()
     }
@@ -521,9 +548,21 @@ onUnmounted(() => {
           >
             {{ server.status }}
           </Badge>
+          <Badge
+            variant="outline"
+            :class="[
+              'px-2.5 py-1 text-sm border',
+              setupVariant(server.setup_state) === 'success' && 'border-primary/30 bg-primary/10 text-primary',
+              setupVariant(server.setup_state) === 'warning' && 'border-accent/30 bg-accent/10 text-accent',
+              setupVariant(server.setup_state) === 'danger' && 'border-destructive/30 bg-destructive/10 text-destructive',
+              setupVariant(server.setup_state) === 'default' && 'border-border/60 bg-muted/60 text-foreground',
+            ]"
+          >
+            setup {{ server.setup_state }}
+          </Badge>
           <!-- Agent status badge -->
           <Badge
-            v-if="server.status === 'ready'"
+            v-if="server.setup_state === 'ready'"
             variant="outline"
             :class="[
               'px-2.5 py-1 text-sm border flex items-center gap-1.5',
@@ -695,6 +734,21 @@ onUnmounted(() => {
                     </div>
                   </div>
                   <div class="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
+                    <p class="text-xs font-medium text-muted-foreground">Setup</p>
+                    <div class="mt-1 flex items-center gap-2">
+                      <span
+                        class="h-2 w-2 rounded-full"
+                        :class="{
+                          'bg-primary': server.setup_state === 'ready',
+                          'bg-destructive': server.setup_state === 'degraded',
+                          'bg-accent animate-pulse': server.setup_state === 'running',
+                          'bg-muted-foreground': !['ready', 'degraded', 'running'].includes(server.setup_state),
+                        }"
+                      />
+                      <span class="text-sm font-medium text-foreground/80 capitalize">{{ server.setup_state }}</span>
+                    </div>
+                  </div>
+                  <div class="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
                     <p class="text-xs font-medium text-muted-foreground">Provider</p>
                     <p class="mt-1 text-sm font-medium text-foreground/80">{{ server.provider_type }}</p>
                   </div>
@@ -728,9 +782,24 @@ onUnmounted(() => {
                   <div v-else-if="serverIsDeleted" class="rounded-lg border border-border/60 bg-muted/60 px-4 py-3 text-sm text-muted-foreground">
                     This server has been deleted. Pressluft keeps this record as a tombstone for audit history.
                   </div>
+                  <div v-else-if="server.setup_state === 'degraded'" class="space-y-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    <p>
+                      Setup needs attention<span v-if="server.setup_last_error">: {{ server.setup_last_error }}</span>
+                    </p>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <Button
+                        :disabled="setupRetryState.loading || serverBlocksMutations"
+                        @click="retrySetup"
+                      >
+                        {{ setupRetryState.loading ? 'Queuing setup...' : 'Retry setup' }}
+                      </Button>
+                      <span v-if="setupRetryState.success" class="text-xs text-primary">{{ setupRetryState.success }}</span>
+                      <span v-if="setupRetryState.error" class="text-xs text-destructive">{{ setupRetryState.error }}</span>
+                    </div>
+                  </div>
 
                 <!-- Agent Metrics (only show when server is ready) -->
-                <template v-if="server.status === 'ready'">
+                <template v-if="server.setup_state === 'ready'">
                   <div class="grid gap-4 sm:grid-cols-2">
                     <!-- CPU Usage -->
                     <div class="rounded-lg border border-border/60 bg-card/40 px-4 py-3">

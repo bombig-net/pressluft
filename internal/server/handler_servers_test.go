@@ -351,6 +351,8 @@ func mustOpenServerHandlerDB(t *testing.T) *sql.DB {
 			image              TEXT    NOT NULL,
 			profile_key        TEXT    NOT NULL,
 			status             TEXT    NOT NULL,
+			setup_state        TEXT    NOT NULL DEFAULT 'not_started',
+			setup_last_error   TEXT,
 			action_id          TEXT,
 			action_status      TEXT,
 			node_status        TEXT DEFAULT 'unknown',
@@ -450,8 +452,8 @@ func intToString(v int64) string {
 func mustInsertServerRecord(t *testing.T, db *sql.DB, providerID int64, status string) int64 {
 	t.Helper()
 	res, err := db.Exec(
-		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, setup_state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		providerID,
 		"test-server-provider",
 		"agency-prod-01",

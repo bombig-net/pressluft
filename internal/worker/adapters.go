@@ -35,11 +35,17 @@ func (a *ServerStoreAdapter) GetByID(ctx context.Context, id int64) (*StoredServ
 		Image:            s.Image,
 		ProfileKey:       s.ProfileKey,
 		Status:           s.Status,
+		SetupState:       s.SetupState,
+		SetupLastError:   s.SetupLastError,
 	}, nil
 }
 
 func (a *ServerStoreAdapter) UpdateStatus(ctx context.Context, id int64, status string) error {
 	return a.store.UpdateStatus(ctx, id, status)
+}
+
+func (a *ServerStoreAdapter) UpdateSetupState(ctx context.Context, id int64, setupState, setupLastError string) error {
+	return a.store.UpdateSetupState(ctx, id, setupState, setupLastError)
 }
 
 func (a *ServerStoreAdapter) UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error {

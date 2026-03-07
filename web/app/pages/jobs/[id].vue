@@ -19,7 +19,8 @@ const jobError = ref("")
 
 const jobKindLabel = (kind: string): string => {
   const labels: Record<string, string> = {
-    provision_server: "Server provisioning",
+    provision_server: "Server infrastructure provisioning",
+    configure_server: "Server setup",
     delete_server: "Server deletion",
     rebuild_server: "Server rebuild",
     resize_server: "Server resize",

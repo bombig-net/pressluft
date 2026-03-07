@@ -49,6 +49,7 @@ if [ -z "${PRESSLUFT_CONTROL_PLANE_URL:-}" ]; then
   fi
 
   echo "Cloudflare tunnel: $PRESSLUFT_CONTROL_PLANE_URL"
+  echo "WARNING: Cloudflare quick tunnels are ephemeral. Remote agents configured against this URL will not reconnect after control-plane restart."
 fi
 
 PORT="$DEV_API_PORT" PRESSLUFT_CONTROL_PLANE_URL="$PRESSLUFT_CONTROL_PLANE_URL" "$GO_CMD" run -tags dev ./cmd &

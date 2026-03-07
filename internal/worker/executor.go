@@ -25,6 +25,7 @@ import (
 type ServerStore interface {
 	GetByID(ctx context.Context, id int64) (*StoredServer, error)
 	UpdateStatus(ctx context.Context, id int64, status string) error
+	UpdateSetupState(ctx context.Context, id int64, setupState, setupLastError string) error
 	UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error
 	UpdateServerType(ctx context.Context, id int64, serverType string) error
 	UpdateImage(ctx context.Context, id int64, image string) error
@@ -46,6 +47,8 @@ type StoredServer struct {
 	Image            string
 	ProfileKey       string
 	Status           string
+	SetupState       string
+	SetupLastError   string
 }
 
 // StoredServerKey mirrors the server package key type to avoid import cycles.
@@ -166,6 +169,8 @@ func (e *Executor) Execute(ctx context.Context, job *orchestrator.Job) error {
 	switch job.Kind {
 	case string(orchestrator.JobKindProvisionServer):
 		return e.executeProvisionServer(ctx, job)
+	case string(orchestrator.JobKindConfigureServer):
+		return e.executeConfigureServer(ctx, job)
 	case string(orchestrator.JobKindDeleteServer):
 		return e.executeDeleteServer(ctx, job)
 	case string(orchestrator.JobKindRebuildServer):
@@ -210,14 +215,8 @@ func (e *Executor) executeAgentJob(ctx context.Context, job *orchestrator.Job) e
 	return nil
 }
 
-// executeProvisionServer runs the server provisioning workflow:
-// 1. validate - Check server record and provider exist
-// 2. create_ssh_key - Generate and register SSH key with provider
-// 3. create_server - Call provider API to create server with SSH key
-// 4. wait_running - Poll until server is running
-// 5. finalize - Mark server as ready
+// executeProvisionServer provisions provider infrastructure and then queues setup.
 func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator.Job) error {
-	// Transition to running
 	if _, err := e.jobStore.TransitionJob(ctx, job.ID, orchestrator.TransitionInput{
 		ToStatus:    orchestrator.JobStatusRunning,
 		CurrentStep: "validate",
@@ -238,7 +237,6 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 		Title:              fmt.Sprintf("%s started", orchestrator.JobKindLabel(job.Kind)),
 	})
 
-	// Step 1: Validate
 	e.emitStepStart(ctx, job.ID, "validate", "Validating server configuration")
 
 	server, err := e.serverStore.GetByID(ctx, job.ServerID)
@@ -263,14 +261,11 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 	if strings.TrimSpace(e.playbookPath) == "" {
 		return e.failJob(ctx, job, "provision playbook path not configured")
 	}
-	if strings.TrimSpace(e.configurePath) == "" {
-		return e.failJob(ctx, job, "configure playbook path not configured")
-	}
 
 	e.emitStepComplete(ctx, job.ID, "validate", "Server configuration validated")
 	e.setServerStatus(ctx, server.ID, platform.ServerStatusProvisioning)
+	e.setSetupState(ctx, server.ID, platform.SetupStateNotStarted, "")
 
-	// Step 2: Provision with Ansible
 	e.updateStep(ctx, job.ID, "provision")
 	e.emitStepStart(ctx, job.ID, "provision", "Running provision playbook")
 
@@ -281,17 +276,17 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 	}
 
 	var publicKey string
-	var privateKey string
 	if storedKey != nil {
 		publicKey = storedKey.PublicKey
 		e.logSSHPublicKey("stored", publicKey)
 	} else {
-		publicKey, privateKey, err = hetzner.GenerateSSHKeyPair(keyName)
+		var generatedPrivateKey string
+		publicKey, generatedPrivateKey, err = hetzner.GenerateSSHKeyPair(keyName)
 		if err != nil {
 			return e.failJob(ctx, job, fmt.Sprintf("failed to generate SSH key: %v", err))
 		}
 		e.logSSHPublicKey("generated", publicKey)
-		encryptedKey, keyID, err := security.Encrypt([]byte(privateKey))
+		encryptedKey, keyID, err := security.Encrypt([]byte(generatedPrivateKey))
 		if err != nil {
 			return e.failJob(ctx, job, fmt.Sprintf("failed to encrypt SSH key: %v", err))
 		}
@@ -307,10 +302,9 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 			}
 			if storedKey == nil {
 				return e.failJob(ctx, job, fmt.Sprintf("failed to store SSH key: %v", err))
-			}
-			publicKey = storedKey.PublicKey
-			privateKey = ""
-			e.logSSHPublicKey("stored_after_conflict", publicKey)
+				}
+				publicKey = storedKey.PublicKey
+				e.logSSHPublicKey("stored_after_conflict", publicKey)
 		} else {
 			storedKey = &StoredServerKey{
 				ServerID:            server.ID,
@@ -374,52 +368,27 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 	}
 
 	e.emitStepComplete(ctx, job.ID, "provision", fmt.Sprintf("Server created: %s", providerServerID))
-
-	// Step 3: Configure
-	e.updateStep(ctx, job.ID, "configure")
-	e.emitStepStart(ctx, job.ID, "configure", "Running configure playbook")
 	e.setServerStatus(ctx, server.ID, platform.ServerStatusConfiguring)
+	e.setSetupState(ctx, server.ID, platform.SetupStateRunning, "")
 
-	if err := e.runConfigurePlaybook(ctx, job.ID, server, result.IPv4, privateKey, storedKey); err != nil {
-		return e.failJob(ctx, job, fmt.Sprintf("ansible configure failed: %v", err))
+	payloadBytes, err := json.Marshal(configureServerPayload{IPv4: result.IPv4})
+	if err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("marshal configure payload: %v", err))
 	}
-
-	e.emitStepComplete(ctx, job.ID, "configure", "Configure playbook completed")
-
-	// Step 4: Finalize
-	e.updateStep(ctx, job.ID, "finalize")
-	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing server setup")
-
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, string(platform.ServerStatusReady)); err != nil {
-		e.logger.Error("failed to update server status to ready", "error", err)
-	}
-
-	e.emitStepComplete(ctx, job.ID, "finalize", "Server provisioning complete")
-
-	// Mark job as succeeded
-	if _, err := e.jobStore.TransitionJob(ctx, job.ID, orchestrator.TransitionInput{
-		ToStatus:    orchestrator.JobStatusSucceeded,
-		CurrentStep: "finalize",
-	}); err != nil {
-		return fmt.Errorf("transition to succeeded: %w", err)
-	}
-
-	e.emitEvent(ctx, job.ID, orchestrator.JobEventTypeSucceeded, "info", "", string(orchestrator.JobStatusSucceeded), "Job completed successfully")
-
-	// Emit job completed activity
-	e.emitActivity(ctx, activity.EmitInput{
-		EventType:          activity.EventJobCompleted,
-		Category:           activity.CategoryJob,
-		Level:              activity.LevelSuccess,
-		ResourceType:       activity.ResourceJob,
-		ResourceID:         job.ID,
-		ParentResourceType: activity.ResourceServer,
-		ParentResourceID:   job.ServerID,
-		ActorType:          activity.ActorSystem,
-		Title:              fmt.Sprintf("%s completed", orchestrator.JobKindLabel(job.Kind)),
+	configureJob, err := e.jobStore.CreateJob(ctx, orchestrator.CreateJobInput{
+		Kind:     string(orchestrator.JobKindConfigureServer),
+		ServerID: server.ID,
+		Payload:  string(payloadBytes),
 	})
+	if err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("queue configure job: %v", err))
+	}
+	e.emitEvent(ctx, configureJob.ID, orchestrator.JobEventTypeCreated, "info", "", string(configureJob.Status), "Setup job accepted and queued")
 
-	// Emit server provisioned activity (special case for provision jobs)
+	if err := e.completeJob(ctx, job, "provision"); err != nil {
+		return err
+	}
+
 	e.emitActivity(ctx, activity.EmitInput{
 		EventType:    activity.EventServerProvisioned,
 		Category:     activity.CategoryServer,
@@ -429,7 +398,6 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 		ActorType:    activity.ActorSystem,
 		Title:        fmt.Sprintf("Server '%s' provisioned", server.Name),
 	})
-
 	return nil
 }
 
@@ -440,6 +408,10 @@ type deleteServerPayload struct {
 type rebuildServerPayload struct {
 	ServerName  string `json:"server_name"`
 	ServerImage string `json:"server_image"`
+}
+
+type configureServerPayload struct {
+	IPv4 string `json:"ipv4"`
 }
 
 type resizeServerPayload struct {
@@ -457,6 +429,70 @@ type manageVolumePayload struct {
 	Location   string `json:"location"`
 	State      string `json:"state"`
 	Automount  *bool  `json:"automount"`
+}
+
+func (e *Executor) executeConfigureServer(ctx context.Context, job *orchestrator.Job) error {
+	if job.ServerID <= 0 {
+		return e.failJob(ctx, job, "server_id is required for configure_server job")
+	}
+	if _, err := e.jobStore.TransitionJob(ctx, job.ID, orchestrator.TransitionInput{
+		ToStatus:    orchestrator.JobStatusRunning,
+		CurrentStep: "validate",
+	}); err != nil {
+		return fmt.Errorf("transition to running: %w", err)
+	}
+
+	e.emitActivity(ctx, activity.EmitInput{
+		EventType:          activity.EventJobStarted,
+		Category:           activity.CategoryJob,
+		Level:              activity.LevelInfo,
+		ResourceType:       activity.ResourceJob,
+		ResourceID:         job.ID,
+		ParentResourceType: activity.ResourceServer,
+		ParentResourceID:   job.ServerID,
+		ActorType:          activity.ActorSystem,
+		Title:              fmt.Sprintf("%s started", orchestrator.JobKindLabel(job.Kind)),
+	})
+
+	e.emitStepStart(ctx, job.ID, "validate", "Validating server setup request")
+	server, err := e.serverStore.GetByID(ctx, job.ServerID)
+	if err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("server not found: %v", err))
+	}
+	if strings.TrimSpace(e.configurePath) == "" {
+		return e.failJob(ctx, job, "configure playbook path not configured")
+	}
+
+	var payload configureServerPayload
+	if err := parseJobPayload(job, &payload); err != nil {
+		return e.failJob(ctx, job, err.Error())
+	}
+	ipv4 := strings.TrimSpace(payload.IPv4)
+	if ipv4 == "" {
+		ipv4 = strings.TrimSpace(server.IPv4)
+	}
+	if ipv4 == "" {
+		return e.failJob(ctx, job, "server IPv4 is required for configure_server job")
+	}
+
+	e.emitStepComplete(ctx, job.ID, "validate", "Server setup request validated")
+	e.updateStep(ctx, job.ID, "configure")
+	e.emitStepStart(ctx, job.ID, "configure", "Running configure playbook")
+	e.setServerStatus(ctx, server.ID, platform.ServerStatusConfiguring)
+	e.setSetupState(ctx, server.ID, platform.SetupStateRunning, "")
+
+	if err := e.runConfigurePlaybook(ctx, job.ID, server, ipv4, "", nil); err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("ansible configure failed: %v", err))
+	}
+
+	e.emitStepComplete(ctx, job.ID, "configure", "Configure playbook completed")
+	e.updateStep(ctx, job.ID, "finalize")
+	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing server setup")
+	e.setSetupState(ctx, server.ID, platform.SetupStateReady, "")
+	e.setServerStatus(ctx, server.ID, platform.ServerStatusReady)
+	e.emitStepComplete(ctx, job.ID, "finalize", "Server setup complete")
+
+	return e.completeJob(ctx, job, "finalize")
 }
 
 func (e *Executor) executeDeleteServer(ctx context.Context, job *orchestrator.Job) error {
@@ -636,28 +672,29 @@ func (e *Executor) executeRebuildServer(ctx context.Context, job *orchestrator.J
 
 	e.emitStepComplete(ctx, job.ID, "rebuild", "Rebuild playbook completed")
 	e.setServerStatus(ctx, server.ID, platform.ServerStatusConfiguring)
-
-	e.updateStep(ctx, job.ID, "configure")
-	e.emitStepStart(ctx, job.ID, "configure", "Running configure playbook")
-
-	if strings.TrimSpace(server.IPv4) == "" {
-		return e.failJob(ctx, job, "server IPv4 is required for rebuild configure")
-	}
-	if err := e.runConfigurePlaybook(ctx, job.ID, server, server.IPv4, "", nil); err != nil {
-		return e.failJob(ctx, job, fmt.Sprintf("ansible configure failed after rebuild: %v", err))
-	}
+	e.setSetupState(ctx, server.ID, platform.SetupStateRunning, "")
 	if err := e.serverStore.UpdateImage(ctx, server.ID, serverImage); err != nil {
 		e.logger.Error("failed to update server image", "error", err)
 	}
-	e.emitStepComplete(ctx, job.ID, "configure", "Configure playbook completed")
+	if strings.TrimSpace(server.IPv4) == "" {
+		return e.failJob(ctx, job, "server IPv4 is required for rebuild follow-up setup")
+	}
+	configurePayload, err := json.Marshal(configureServerPayload{IPv4: server.IPv4})
+	if err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("marshal rebuild configure payload: %v", err))
+	}
+	configureJob, err := e.jobStore.CreateJob(ctx, orchestrator.CreateJobInput{
+		Kind:     string(orchestrator.JobKindConfigureServer),
+		ServerID: server.ID,
+		Payload:  string(configurePayload),
+	})
+	if err != nil {
+		return e.failJob(ctx, job, fmt.Sprintf("queue configure job after rebuild: %v", err))
+	}
+	e.emitEvent(ctx, configureJob.ID, orchestrator.JobEventTypeCreated, "info", "", string(configureJob.Status), "Setup job accepted and queued")
 
 	e.updateStep(ctx, job.ID, "finalize")
-	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing rebuild")
-
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, string(platform.ServerStatusReady)); err != nil {
-		e.logger.Error("failed to update server status to ready", "error", err)
-	}
-
+	e.emitStepStart(ctx, job.ID, "finalize", "Queued follow-up server setup")
 	e.emitStepComplete(ctx, job.ID, "finalize", "Server rebuild complete")
 
 	return e.completeJob(ctx, job, "finalize")
@@ -1056,6 +1093,17 @@ func (e *Executor) setServerStatus(ctx context.Context, serverID int64, status p
 	e.logger.Info("server status updated", "server_id", serverID, "server_status", status)
 }
 
+func (e *Executor) setSetupState(ctx context.Context, serverID int64, setupState platform.SetupState, setupLastError string) {
+	if serverID <= 0 || strings.TrimSpace(string(setupState)) == "" {
+		return
+	}
+	if err := e.serverStore.UpdateSetupState(ctx, serverID, string(setupState), setupLastError); err != nil {
+		e.logger.Error("server setup state persistence failed", "server_id", serverID, "setup_state", setupState, "error", err)
+		return
+	}
+	e.logger.Info("server setup state updated", "server_id", serverID, "setup_state", setupState)
+}
+
 func (e *Executor) runLocalPlaybook(ctx context.Context, jobID int64, playbookPath string, extraVars map[string]string) error {
 	workspace, err := os.MkdirTemp("", "pressluft-ansible-")
 	if err != nil {
@@ -1122,9 +1170,10 @@ func (e *Executor) failJob(ctx context.Context, job *orchestrator.Job, errMsg st
 	corr := observability.Correlation{JobID: job.ID, ServerID: job.ServerID, CommandID: derefString(job.CommandID)}
 	e.logger.Error("job failed", corr.LogArgs("error", errMsg)...)
 
-	// Update server status to failed
 	if job.ServerID > 0 {
-		if err := e.serverStore.UpdateStatus(ctx, job.ServerID, string(platform.ServerStatusFailed)); err != nil {
+		if job.Kind == string(orchestrator.JobKindConfigureServer) {
+			e.setSetupState(ctx, job.ServerID, platform.SetupStateDegraded, errMsg)
+		} else if err := e.serverStore.UpdateStatus(ctx, job.ServerID, string(platform.ServerStatusFailed)); err != nil {
 			e.logger.Error("server failure status persistence failed", corr.LogArgs("server_status", platform.ServerStatusFailed, "error", err)...)
 		}
 	}

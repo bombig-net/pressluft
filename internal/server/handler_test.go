@@ -18,12 +18,12 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
 	}
 
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
 	if payload["status"] != "healthy" {
-		t.Fatalf("status payload = %q, want %q", payload["status"], "healthy")
+		t.Fatalf("status payload = %v, want %q", payload["status"], "healthy")
 	}
 }

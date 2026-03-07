@@ -124,6 +124,12 @@ func reconcileLegacySchema(db *sql.DB) error {
 	}); err != nil {
 		return err
 	}
+	if err := ensureServersColumns(db, []string{
+		"setup_state TEXT NOT NULL DEFAULT 'not_started'",
+		"setup_last_error TEXT",
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -204,6 +210,49 @@ func ensureProvidersColumns(db *sql.DB, definitions []string) error {
 		}
 		if _, err := db.Exec(`ALTER TABLE providers ADD COLUMN ` + definition); err != nil {
 			return fmt.Errorf("add providers.%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func ensureServersColumns(db *sql.DB, definitions []string) error {
+	rows, err := db.Query(`PRAGMA table_info(servers)`)
+	if err != nil {
+		return fmt.Errorf("inspect servers schema: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]struct{})
+	foundTable := false
+	for rows.Next() {
+		foundTable = true
+		var cid int
+		var name, dataType string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan servers schema: %w", err)
+		}
+		existing[strings.ToLower(name)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate servers schema: %w", err)
+	}
+	if !foundTable {
+		return nil
+	}
+
+	for _, definition := range definitions {
+		parts := strings.Fields(definition)
+		if len(parts) == 0 {
+			continue
+		}
+		name := strings.ToLower(parts[0])
+		if _, ok := existing[name]; ok {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN ` + definition); err != nil {
+			return fmt.Errorf("add servers.%s: %w", name, err)
 		}
 	}
 	return nil

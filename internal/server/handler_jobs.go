@@ -222,6 +222,10 @@ func validateJobPayload(req createJobRequest) (string, error) {
 
 	switch req.Kind {
 	case string(orchestrator.JobKindProvisionServer):
+	case string(orchestrator.JobKindConfigureServer):
+		if req.ServerID <= 0 {
+			return "", fmt.Errorf("server_id is required for configure_server job")
+		}
 	case string(orchestrator.JobKindDeleteServer):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for delete_server job")

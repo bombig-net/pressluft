@@ -37,7 +37,7 @@ const retryCount = ref(0)
 // Step key to human-readable label mapping (matches backend executor steps)
 const stepLabels: Record<string, string> = {
   validate: "Validating request",
-  provision: "Provisioning server",
+  provision: "Provisioning infrastructure",
   configure: "Configuring server",
   finalize: "Finalizing",
   delete: "Deleting server",
@@ -48,7 +48,8 @@ const stepLabels: Record<string, string> = {
 }
 
 const stepOrderByKind: Record<string, string[]> = {
-  provision: ["validate", "provision", "configure", "finalize"],
+  provision: ["validate", "provision"],
+  configure: ["validate", "configure", "finalize"],
   delete: ["validate", "delete", "finalize"],
   rebuild: ["validate", "rebuild", "configure", "finalize"],
   resize: ["validate", "resize", "finalize"],

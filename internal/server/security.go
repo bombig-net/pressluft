@@ -17,6 +17,7 @@ type HandlerOptions struct {
 	ActivityStore ActivityEmitter
 	Logger        loggerLike
 	IsDev         bool
+	ControlPlaneURL string
 }
 
 type ActivityEmitter interface {

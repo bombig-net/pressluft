@@ -49,6 +49,8 @@ export interface StoredServer {
   image: string
   profile_key: string
   status: string
+  setup_state: string
+  setup_last_error?: string
   action_id?: string
   action_status?: string
   node_status?: string

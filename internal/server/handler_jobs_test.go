@@ -322,6 +322,8 @@ func mustOpenJobsHandlerDB(t *testing.T) *sql.DB {
 			image              TEXT,
 			profile_key        TEXT,
 			status             TEXT    NOT NULL DEFAULT 'ready',
+			setup_state        TEXT    NOT NULL DEFAULT 'not_started',
+			setup_last_error   TEXT,
 			action_id          TEXT,
 			action_status      TEXT,
 			node_status        TEXT DEFAULT 'unknown',
@@ -383,8 +385,8 @@ func mustInsertJobServer(t *testing.T, db *sql.DB, status string) int64 {
 	t.Helper()
 
 	res, err := db.Exec(
-		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, created_at, updated_at)
-		 VALUES (1, 'hetzner', 'job-server', 'fsn1', 'cx22', 'ubuntu-24.04', 'nginx-stack', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO servers (provider_id, provider_type, name, location, server_type, image, profile_key, status, setup_state, created_at, updated_at)
+		 VALUES (1, 'hetzner', 'job-server', 'fsn1', 'cx22', 'ubuntu-24.04', 'nginx-stack', ?, 'ready', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
 		status,
 	)
 	if err != nil {

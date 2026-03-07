@@ -42,6 +42,8 @@ const {
 } = useServers()
 
 const { getStatusType, isConnected } = useAllAgentStatus({ pollInterval: 15000 })
+const callbackMode = ref<"unknown" | "stable" | "ephemeral">("unknown")
+const callbackWarning = ref("")
 
 // Delete confirmation state
 const deleteConfirmId = ref<number | null>(null)
@@ -138,6 +140,14 @@ const buttonBaseClass =
 
 onMounted(async () => {
   await Promise.all([fetchProviders(), fetchServers()])
+  fetch('/api/health')
+    .then(async (res) => {
+      if (!res.ok) return
+      const body = await res.json()
+      callbackMode.value = body.callback_url_mode || "unknown"
+      callbackWarning.value = body.callback_url_warning || ""
+    })
+    .catch(() => {})
 })
 
 const resetForm = () => {
@@ -299,6 +309,13 @@ const statusBadgeClass = (status: string): string => {
   return "border-border/60 bg-muted/60 text-foreground"
 }
 
+const setupBadgeClass = (setupState?: string): string => {
+  if (setupState === "ready") return "border-primary/30 bg-primary/10 text-primary"
+  if (setupState === "degraded") return "border-destructive/30 bg-destructive/10 text-destructive"
+  if (setupState === "running") return "border-accent/30 bg-accent/10 text-accent"
+  return "border-border/60 bg-muted/60 text-muted-foreground"
+}
+
 const confirmDelete = (serverId: number) => {
 	deleteError.value = ""
 	deleteSuccess.value = ""
@@ -337,6 +354,15 @@ const handleDialogUpdate = (value: boolean) => {
 
 <template>
   <div class="space-y-6">
+    <Alert
+      v-if="callbackMode === 'ephemeral' && callbackWarning"
+      class="border-accent/30 bg-accent/10 text-accent"
+    >
+      <AlertDescription>
+        {{ callbackWarning }}
+      </AlertDescription>
+    </Alert>
+
     <div class="flex items-center justify-between">
       <p class="text-sm text-muted-foreground">
         Provision managed servers for agency WordPress workloads.
@@ -377,9 +403,10 @@ const handleDialogUpdate = (value: boolean) => {
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium text-foreground group-hover:text-foreground">{{ server.name }}</span>
             <Badge :class="statusBadgeClass(server.status)">{{ server.status }}</Badge>
+            <Badge :class="setupBadgeClass(server.setup_state)">setup {{ server.setup_state }}</Badge>
             <!-- Agent status indicator -->
             <span
-              v-if="server.status === 'ready'"
+              v-if="server.setup_state === 'ready'"
               class="flex items-center gap-1 text-xs"
               :title="'Agent: ' + getStatusType(server.id)"
             >
@@ -406,6 +433,9 @@ const handleDialogUpdate = (value: boolean) => {
           </div>
           <p class="text-xs text-muted-foreground">
             {{ server.location }} · {{ server.server_type }} · {{ server.profile_key }} · Added {{ formatDate(server.created_at) }}
+          </p>
+          <p v-if="server.setup_state === 'degraded' && server.setup_last_error" class="mt-1 text-xs text-destructive">
+            Setup needs attention: {{ server.setup_last_error }}
           </p>
           <p v-if="server.status === 'deleting'" class="mt-1 text-xs text-accent">
             Deletion is queued and runs asynchronously until provider-side removal completes.

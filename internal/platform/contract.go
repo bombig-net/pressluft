@@ -25,6 +25,8 @@ const (
 
 type ServerStatus string
 
+type SetupState string
+
 const (
 	ServerStatusPending      ServerStatus = "pending"
 	ServerStatusProvisioning ServerStatus = "provisioning"
@@ -35,6 +37,21 @@ const (
 	ServerStatusDeleted      ServerStatus = "deleted"
 	ServerStatusReady        ServerStatus = "ready"
 	ServerStatusFailed       ServerStatus = "failed"
+)
+
+const (
+	SetupStateNotStarted SetupState = "not_started"
+	SetupStateRunning    SetupState = "running"
+	SetupStateDegraded   SetupState = "degraded"
+	SetupStateReady      SetupState = "ready"
+)
+
+type CallbackURLMode string
+
+const (
+	CallbackURLModeUnknown   CallbackURLMode = "unknown"
+	CallbackURLModeStable    CallbackURLMode = "stable"
+	CallbackURLModeEphemeral CallbackURLMode = "ephemeral"
 )
 
 func QueuedServerStatusForJobKind(kind string) (ServerStatus, bool) {
@@ -57,6 +74,17 @@ func IsDeletingOrDeletedServerStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func DetectCallbackURLMode(raw string) CallbackURLMode {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return CallbackURLModeUnknown
+	}
+	if strings.Contains(value, ".trycloudflare.com") {
+		return CallbackURLModeEphemeral
+	}
+	return CallbackURLModeStable
 }
 
 func NormalizeControlPlaneExecutionMode(raw string, devBuild bool) (ExecutionMode, error) {

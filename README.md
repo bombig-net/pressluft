@@ -29,6 +29,8 @@ This section is Milestone 0's platform-layer contract. Later runtime work should
 ### Execution modes
 
 - `dev`: Go binaries built with the `dev` build tag. Agent trust uses a dev WebSocket token. TLS is not required. This is the default local contributor workflow.
+- In `dev`, `make dev` will start a Cloudflare quick tunnel when `PRESSLUFT_CONTROL_PLANE_URL` is unset. That path is intentionally ephemeral: remote agents configured against a `*.trycloudflare.com` callback URL will not reconnect after control-plane restart.
+- Durable dev reconnect requires setting `PRESSLUFT_CONTROL_PLANE_URL` to a stable public hostname. The recommended approach is a named Cloudflare Tunnel bound to fixed DNS.
 - `single-node-local-control-plane`: non-`dev` control-plane binary running locally or on one node for platform work. Hetzner workflows can run, but agent bootstrap is intentionally disabled in this mode.
 - `production-bootstrap`: non-`dev` agent and control-plane contract for production bootstrap. The control plane must start with HTTPS enabled, agents register once over HTTPS with a registration token, then reconnect over `wss` with mTLS.
 
@@ -43,6 +45,13 @@ This section is Milestone 0's platform-layer contract. Later runtime work should
 - `deleted`: provider-side deletion completed and the record is retained as a tombstone.
 - `ready`: the latest platform job completed successfully and the control plane believes the server is available for the currently implemented contract. For the supported `nginx-stack` profile this now means provider provisioning, baseline convergence, profile role execution, and post-config verification all succeeded. For unavailable profiles, configure is blocked before readiness can be implied.
 - `failed`: the latest platform job failed and human attention is required.
+
+Server records also expose setup truth separately from lifecycle truth:
+
+- `setup_state=not_started`: no setup phase has run yet
+- `setup_state=running`: setup/bootstrap is in progress
+- `setup_state=degraded`: provider-backed machine exists, but setup failed and needs attention
+- `setup_state=ready`: the latest setup phase completed successfully
 
 `configured` is not a separate durable server status. In the current contract, configure success is folded into `ready`.
 
@@ -64,7 +73,7 @@ Exact node-status transitions in the current runtime contract:
 
 ### Canonical job kinds and states
 
-- Supported job kinds: `provision_server`, `delete_server`, `rebuild_server`, `resize_server`, `update_firewalls`, `manage_volume`, `restart_service`.
+- Supported job kinds: `provision_server`, `configure_server`, `delete_server`, `rebuild_server`, `resize_server`, `update_firewalls`, `manage_volume`, `restart_service`.
 - Supported durable job statuses: `queued`, `running`, `succeeded`, `failed`.
 - Every currently supported job kind may only enter those four states.
 - Jobs move directly from `queued` to `running` when claimed. If the worker restarts or the kind-specific timeout expires before a terminal result is recorded, the job is marked `failed` with an explicit recovery reason instead of being silently retried.
@@ -73,7 +82,8 @@ Exact node-status transitions in the current runtime contract:
 
 | Job kind | Timeout | Automatic retries | Recovery behavior |
 | --- | --- | --- | --- |
-| `provision_server` | 45 minutes | none | mark failed; inspect provider state before manual retry |
+| `provision_server` | 30 minutes | none | mark failed; inspect provider state before manual retry |
+| `configure_server` | 30 minutes | none | mark failed; retry setup manually after inspection |
 | `delete_server` | 20 minutes | none | mark failed; verify provider deletion state before manual retry |
 | `rebuild_server` | 45 minutes | none | mark failed; inspect machine state before manual retry |
 | `resize_server` | 20 minutes | none | mark failed; inspect resize state before manual retry |
@@ -88,6 +98,8 @@ Exact node-status transitions in the current runtime contract:
 - provider provisioning returned a usable machine for provision jobs
 - configure deployed the Pressluft agent and recorded the selected profile contract
 - no job step in the current workflow ended in `failed`
+
+If provider provisioning succeeds but setup fails, the server remains provider-backed and actionable while `setup_state` becomes `degraded`.
 
 `ready` is now stronger for the supported baseline profile: Pressluft sets it only after the selected configure pipeline verifies required services, listeners, config files, and health checks. Profile breadth remains intentionally narrow.
 

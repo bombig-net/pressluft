@@ -28,6 +28,13 @@ Design rule: `ready` is a capability claim, not just an absence of errors. For M
 
 `configured` is intentionally not its own durable server status. It is a workflow phase whose successful completion currently rolls up into `ready`.
 
+Setup truth is persisted separately from lifecycle truth:
+
+- `not_started`: no setup workflow has run yet
+- `running`: setup/bootstrap is in progress
+- `degraded`: provider-backed machine exists, but setup failed and needs attention
+- `ready`: latest setup workflow completed successfully
+
 `deleted` is the canonical terminal meaning for a removed server and is now a durable tombstone status.
 
 ## Node lifecycle
@@ -81,6 +88,7 @@ This distinction matters because the UI and docs must not treat `ready` as if it
 ## Destructive actions
 
 - `delete_server`: intended to mean provider-side removal.
+- `configure_server`: intended to mean post-provider setup/bootstrap/profile convergence on an existing machine.
 - `rebuild_server`: intended to mean destructive replacement of the machine image.
 - `resize_server`: intended to mean disruptive provider-side capacity change.
 

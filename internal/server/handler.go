@@ -13,6 +13,7 @@ import (
 	"pressluft/internal/activity"
 	"pressluft/internal/auth"
 	"pressluft/internal/orchestrator"
+	"pressluft/internal/platform"
 	"pressluft/internal/provider"
 	"pressluft/internal/ws"
 )
@@ -40,7 +41,9 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 	operatorMux := http.NewServeMux()
 
 	// Health
-	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		handleHealth(w, r, options)
+	})
 
 	// Agent WebSocket
 	if wsHandler != nil {
@@ -186,8 +189,18 @@ func missingDashboardHandler() http.Handler {
 	})
 }
 
-func handleHealth(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
+func handleHealth(w http.ResponseWriter, _ *http.Request, options HandlerOptions) {
+	payload := map[string]any{
+		"status": "healthy",
+	}
+	if options.IsDev {
+		mode := platform.DetectCallbackURLMode(options.ControlPlaneURL)
+		payload["callback_url_mode"] = mode
+		if mode == platform.CallbackURLModeEphemeral {
+			payload["callback_url_warning"] = "Cloudflare quick tunnels are session-scoped. Remote agents configured against this URL will not reconnect after control-plane restart."
+		}
+	}
+	respondJSON(w, http.StatusOK, payload)
 }
 
 func respondJSON(w http.ResponseWriter, status int, payload any) {

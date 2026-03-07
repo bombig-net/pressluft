@@ -141,6 +141,12 @@ func main() {
 	volumePlaybookPath := "ops/ansible/playbooks/manage_volume.yml"
 
 	controlPlaneURL := strings.TrimSpace(os.Getenv("PRESSLUFT_CONTROL_PLANE_URL"))
+	if executionMode == platform.ExecutionModeDev && platform.DetectCallbackURLMode(controlPlaneURL) == platform.CallbackURLModeEphemeral {
+		logger.Warn("ephemeral dev callback URL detected",
+			"control_plane_url", controlPlaneURL,
+			"reconnect_durability", "remote agents configured against Cloudflare quick tunnels will not reconnect after control-plane restart",
+		)
+	}
 	if err := providerStore.BackfillEncryptedTokens(context.Background()); err != nil {
 		log.Fatalf("backfill provider tokens: %v", err)
 	}
@@ -209,7 +215,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              resolveAddr(),
-		Handler:           server.WithRequestLogging(server.NewHandlerWithOptions(db.DB, hub, wsHTTPHandler, nodeHandler, server.HandlerOptions{Authenticator: operatorAuthenticator, AuthService: authService, IsDev: executionMode == platform.ExecutionModeDev}), logger),
+		Handler:           server.WithRequestLogging(server.NewHandlerWithOptions(db.DB, hub, wsHTTPHandler, nodeHandler, server.HandlerOptions{Authenticator: operatorAuthenticator, AuthService: authService, IsDev: executionMode == platform.ExecutionModeDev, ControlPlaneURL: controlPlaneURL}), logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      2 * time.Minute,
