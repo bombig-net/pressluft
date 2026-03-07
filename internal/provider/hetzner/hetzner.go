@@ -32,6 +32,14 @@ func (h *Hetzner) Info() provider.Info {
 	}
 }
 
+func (h *Hetzner) SupportsProvisioningWorkflow() bool {
+	return true
+}
+
+func (h *Hetzner) SupportsServerMutationWorkflow() bool {
+	return true
+}
+
 // Validate checks whether the given API token is valid and has read-write
 // permissions by making a lightweight API call (list locations).
 func (h *Hetzner) Validate(ctx context.Context, token string) (*provider.ValidationResult, error) {

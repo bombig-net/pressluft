@@ -27,25 +27,25 @@ type createJobRequest struct {
 	Payload  json.RawMessage `json:"payload"`
 }
 
-type rebuildServerPayload struct {
+type rebuildServerRequest struct {
 	ServerName  string `json:"server_name"`
 	ServerImage string `json:"server_image"`
 }
 
-type deleteServerPayload struct {
+type deleteServerRequest struct {
 	ServerName string `json:"server_name"`
 }
 
-type resizeServerPayload struct {
+type resizeServerRequest struct {
 	ServerType  string `json:"server_type"`
 	UpgradeDisk *bool  `json:"upgrade_disk"`
 }
 
-type updateFirewallsPayload struct {
+type updateFirewallsRequest struct {
 	Firewalls []string `json:"firewalls"`
 }
 
-type manageVolumePayload struct {
+type manageVolumeRequest struct {
 	VolumeName string `json:"volume_name"`
 	SizeGB     int    `json:"size_gb"`
 	Location   string `json:"location"`
@@ -53,7 +53,7 @@ type manageVolumePayload struct {
 	Automount  *bool  `json:"automount"`
 }
 
-type restartServicePayload struct {
+type restartServiceRequest struct {
 	ServiceName string `json:"service_name"`
 }
 
@@ -226,6 +226,18 @@ func validateJobPayload(req createJobRequest) (string, error) {
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for configure_server job")
 		}
+		if payload == "" || payload == "null" {
+			return orchestrator.MarshalConfigureServerPayload(orchestrator.ConfigureServerPayload{})
+		}
+		var parsed struct {
+			IPv4 string `json:"ipv4"`
+		}
+		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
+			return "", fmt.Errorf("invalid configure_server payload: %w", err)
+		}
+		return orchestrator.MarshalConfigureServerPayload(orchestrator.ConfigureServerPayload{
+			IPv4: parsed.IPv4,
+		})
 	case string(orchestrator.JobKindDeleteServer):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for delete_server job")
@@ -233,26 +245,30 @@ func validateJobPayload(req createJobRequest) (string, error) {
 		if payload == "" || payload == "null" {
 			return "", nil
 		}
-		var parsed deleteServerPayload
+		var parsed deleteServerRequest
 		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
 			return "", fmt.Errorf("invalid delete_server payload: %w", err)
 		}
+		return orchestrator.MarshalDeleteServerPayload()
 	case string(orchestrator.JobKindRebuildServer):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for rebuild_server job")
 		}
 		if payload == "" || payload == "null" {
-			return "", nil
+			return orchestrator.MarshalRebuildServerPayload(orchestrator.RebuildServerPayload{})
 		}
-		var parsed rebuildServerPayload
+		var parsed rebuildServerRequest
 		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
 			return "", fmt.Errorf("invalid rebuild_server payload: %w", err)
 		}
+		return orchestrator.MarshalRebuildServerPayload(orchestrator.RebuildServerPayload{
+			ServerImage: parsed.ServerImage,
+		})
 	case string(orchestrator.JobKindResizeServer):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for resize_server job")
 		}
-		var parsed resizeServerPayload
+		var parsed resizeServerRequest
 		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
 			return "", fmt.Errorf("invalid resize_server payload: %w", err)
 		}
@@ -262,11 +278,15 @@ func validateJobPayload(req createJobRequest) (string, error) {
 		if parsed.UpgradeDisk == nil {
 			return "", fmt.Errorf("upgrade_disk is required for resize_server job")
 		}
+		return orchestrator.MarshalResizeServerPayload(orchestrator.ResizeServerPayload{
+			ServerType:  parsed.ServerType,
+			UpgradeDisk: *parsed.UpgradeDisk,
+		})
 	case string(orchestrator.JobKindUpdateFirewalls):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for update_firewalls job")
 		}
-		var parsed updateFirewallsPayload
+		var parsed updateFirewallsRequest
 		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
 			return "", fmt.Errorf("invalid update_firewalls payload: %w", err)
 		}
@@ -280,11 +300,14 @@ func validateJobPayload(req createJobRequest) (string, error) {
 		if len(firewalls) == 0 {
 			return "", fmt.Errorf("firewalls payload must contain at least one firewall")
 		}
+		return orchestrator.MarshalUpdateFirewallsPayload(orchestrator.UpdateFirewallsPayload{
+			Firewalls: firewalls,
+		})
 	case string(orchestrator.JobKindManageVolume):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for manage_volume job")
 		}
-		var parsed manageVolumePayload
+		var parsed manageVolumeRequest
 		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
 			return "", fmt.Errorf("invalid manage_volume payload: %w", err)
 		}
@@ -304,6 +327,13 @@ func validateJobPayload(req createJobRequest) (string, error) {
 				return "", fmt.Errorf("size_gb is required for manage_volume job when state=present")
 			}
 		}
+		return orchestrator.MarshalManageVolumePayload(orchestrator.ManageVolumePayload{
+			VolumeName: parsed.VolumeName,
+			SizeGB:     parsed.SizeGB,
+			Location:   parsed.Location,
+			State:      parsed.State,
+			Automount:  parsed.Automount,
+		})
 	case string(orchestrator.JobKindRestartService):
 		if req.ServerID <= 0 {
 			return "", fmt.Errorf("server_id is required for restart_service job")
@@ -313,6 +343,11 @@ func validateJobPayload(req createJobRequest) (string, error) {
 			return "", fmt.Errorf("invalid restart_service payload: %w", err)
 		}
 		payload = string(normalizedPayload)
+	default:
+		if payload == "null" {
+			payload = ""
+		}
+		return payload, nil
 	}
 
 	if payload == "null" {

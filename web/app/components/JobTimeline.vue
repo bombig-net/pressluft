@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { useJobs, type Job, type JobEvent, type ConnectionMode } from "~/composables/useJobs"
 import {
   jobKindLabels,
+  jobKindSteps,
   jobTerminalStatuses,
   type JobKind,
   type JobTerminalStatus,
@@ -41,29 +42,6 @@ const loading = ref(true)
 const connectionError = ref("")
 const retryCount = ref(0)
 
-// Step key to human-readable label mapping (matches backend executor steps)
-const stepLabels: Record<string, string> = {
-  validate: "Validating request",
-  provision: "Provisioning infrastructure",
-  configure: "Configuring server",
-  finalize: "Finalizing",
-  delete: "Deleting server",
-  rebuild: "Rebuilding server",
-  resize: "Resizing server",
-  update_firewalls: "Updating firewalls",
-  manage_volume: "Managing volume",
-}
-
-const stepOrderByKind: Record<string, string[]> = {
-  provision: ["validate", "provision"],
-  configure: ["validate", "configure", "finalize"],
-  delete: ["validate", "delete", "finalize"],
-  rebuild: ["validate", "rebuild", "configure", "finalize"],
-  resize: ["validate", "resize", "finalize"],
-  update_firewalls: ["validate", "update_firewalls", "finalize"],
-  manage_volume: ["validate", "manage_volume", "finalize"],
-}
-
 // Derive steps from events
 interface TimelineStep {
   key: string
@@ -74,17 +52,17 @@ interface TimelineStep {
 }
 
 const steps = computed<TimelineStep[]>(() => {
-  const rawKind = activeJob.value?.kind || ""
-  const normalizedKind = rawKind.endsWith("_server")
-    ? rawKind.slice(0, Math.max(rawKind.length - "_server".length, 0))
-    : rawKind
+  const kind = activeJob.value?.kind as JobKind | undefined
   const eventStepOrder: string[] = []
   for (const event of events.value) {
     if (event.step_key && !eventStepOrder.includes(event.step_key)) {
       eventStepOrder.push(event.step_key)
     }
   }
-  const stepOrder = stepOrderByKind[normalizedKind] || eventStepOrder
+  const workflowSteps = kind ? jobKindSteps[kind] || [] : []
+  const stepOrder = workflowSteps.length > 0
+    ? workflowSteps.map((step) => step.key)
+    : eventStepOrder
   const eventsByStep = new Map<string, JobEvent[]>()
 
   // Group events by step_key
@@ -119,7 +97,7 @@ const steps = computed<TimelineStep[]>(() => {
 
     return {
       key,
-      label: stepLabels[key] || key,
+      label: workflowSteps.find((step) => step.key === key)?.label || key,
       status,
       message: latestEvent?.message,
       timestamp: latestEvent?.occurred_at,

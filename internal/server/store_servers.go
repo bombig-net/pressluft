@@ -453,7 +453,7 @@ func (s *ServerStore) QueueServerJob(ctx context.Context, in QueueServerJobInput
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if queuedStatus, ok := platform.QueuedServerStatusForJobKind(in.Kind); ok {
+	if queuedStatus, ok := orchestrator.QueuedServerStatusForKind(in.Kind); ok {
 		var activeJobID int64
 		var activeJobKind string
 		err := tx.QueryRowContext(ctx,

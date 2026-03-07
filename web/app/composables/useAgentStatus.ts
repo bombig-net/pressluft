@@ -1,5 +1,5 @@
 import { ref, readonly, onUnmounted, onMounted, type Ref } from 'vue'
-import type { AgentInfo, AgentStatusType } from './useServers'
+import type { AgentInfo } from '~/lib/api-contract'
 import { reachableNodeStatuses } from '~/lib/platform-contract.generated'
 
 interface UseAgentStatusOptions {
@@ -14,6 +14,7 @@ interface UseAgentStatusOptions {
  */
 export function useAgentStatus(serverId: Ref<number | null>, options: UseAgentStatusOptions = {}) {
   const { pollInterval = 15000, autoStart = true } = options
+  const { apiFetch } = useApiClient()
 
   const agentInfo = ref<AgentInfo | null>(null)
   const loading = ref(false)
@@ -27,9 +28,7 @@ export function useAgentStatus(serverId: Ref<number | null>, options: UseAgentSt
     loading.value = true
     error.value = ''
     try {
-      const res = await globalThis.fetch(`/api/servers/${serverId.value}/agent-status`)
-      if (!res.ok) throw new Error('Failed to fetch agent status')
-      agentInfo.value = await res.json()
+      agentInfo.value = await apiFetch<AgentInfo>(`/servers/${serverId.value}/agent-status`)
     } catch (e: any) {
       error.value = e.message
     } finally {
@@ -78,6 +77,7 @@ export function useAgentStatus(serverId: Ref<number | null>, options: UseAgentSt
  */
 export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
   const { pollInterval = 15000, autoStart = true } = options
+  const { apiFetch } = useApiClient()
 
   const agentInfoMap = ref<Record<number, AgentInfo>>({})
   const loading = ref(false)
@@ -89,9 +89,7 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
     loading.value = true
     error.value = ''
     try {
-      const res = await globalThis.fetch('/api/servers/agents')
-      if (!res.ok) throw new Error('Failed to fetch agent status')
-      agentInfoMap.value = await res.json()
+      agentInfoMap.value = await apiFetch<Record<number, AgentInfo>>('/servers/agents')
     } catch (e: any) {
       error.value = e.message
     } finally {
@@ -113,7 +111,7 @@ export function useAllAgentStatus(options: UseAgentStatusOptions = {}) {
     return info ? reachableNodeStatuses.includes(info.status) : false
   }
 
-  const getStatusType = (serverId: number): AgentStatusType => {
+  const getStatusType = (serverId: number): AgentInfo['status'] => {
     const info = agentInfoMap.value[serverId]
     return info?.status ?? 'unknown'
   }

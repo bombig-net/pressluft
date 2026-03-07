@@ -115,12 +115,6 @@ type HealthCheck struct {
 	Command string `yaml:"command" json:"command"`
 }
 
-var registryArtifactPaths = []string{
-	"ops/profiles/nginx-stack/profile.yaml",
-	"ops/profiles/openlitespeed-stack/profile.yaml",
-	"ops/profiles/woocommerce-optimized/profile.yaml",
-}
-
 var registry = mustLoadRegistry()
 
 // All returns all available server profiles.
@@ -170,8 +164,12 @@ func loadRegistry() ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Profile, 0, len(registryArtifactPaths))
-	for _, artifactPath := range registryArtifactPaths {
+	artifactPaths, err := discoverArtifactPaths(root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Profile, 0, len(artifactPaths))
+	for _, artifactPath := range artifactPaths {
 		artifact, err := LoadArtifact(filepath.Join(root, filepath.FromSlash(artifactPath)))
 		if err != nil {
 			return nil, fmt.Errorf("load profile artifact %q: %w", artifactPath, err)
@@ -190,6 +188,27 @@ func loadRegistry() ([]Profile, error) {
 	return out, nil
 }
 
+func discoverArtifactPaths(root string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(root, "ops", "profiles"))
+	if err != nil {
+		return nil, fmt.Errorf("read ops/profiles: %w", err)
+	}
+	artifactPaths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		artifactPath := filepath.Join("ops", "profiles", entry.Name(), "profile.yaml")
+		fullPath := filepath.Join(root, artifactPath)
+		if _, err := os.Stat(fullPath); err != nil {
+			return nil, fmt.Errorf("profile artifact missing for %q: %w", entry.Name(), err)
+		}
+		artifactPaths = append(artifactPaths, filepath.ToSlash(artifactPath))
+	}
+	sort.Strings(artifactPaths)
+	return artifactPaths, nil
+}
+
 func repoRoot() (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -202,6 +221,19 @@ func ValidateRegistryArtifacts(repoRoot string) error {
 	entries, err := os.ReadDir(filepath.Join(repoRoot, "ops", "profiles"))
 	if err != nil {
 		return fmt.Errorf("read ops/profiles: %w", err)
+	}
+
+	expectedPaths, err := discoverArtifactPaths(repoRoot)
+	if err != nil {
+		return err
+	}
+	expectedByKey := make(map[string]string, len(expectedPaths))
+	for _, artifactPath := range expectedPaths {
+		artifact, err := LoadArtifact(filepath.Join(repoRoot, artifactPath))
+		if err != nil {
+			return fmt.Errorf("load artifact %q: %w", artifactPath, err)
+		}
+		expectedByKey[artifact.Key] = artifactPath
 	}
 
 	artifactKeys := make([]string, 0, len(entries))
@@ -223,7 +255,7 @@ func ValidateRegistryArtifacts(repoRoot string) error {
 		if !ok {
 			return fmt.Errorf("artifact key %q missing from registry", artifact.Key)
 		}
-		if profile.ArtifactPath != filepath.ToSlash(filepath.Join("ops", "profiles", entry.Name(), "profile.yaml")) {
+		if profile.ArtifactPath != expectedByKey[artifact.Key] {
 			return fmt.Errorf("registry artifact path mismatch for %q: got %q", artifact.Key, profile.ArtifactPath)
 		}
 		if profile.Name != artifact.Name {

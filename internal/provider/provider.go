@@ -32,6 +32,16 @@ type Provider interface {
 	Validate(ctx context.Context, token string) (*ValidationResult, error)
 }
 
+type ProvisioningWorkflowProvider interface {
+	Provider
+	SupportsProvisioningWorkflow() bool
+}
+
+type ServerMutationWorkflowProvider interface {
+	Provider
+	SupportsServerMutationWorkflow() bool
+}
+
 // registry holds all registered provider implementations keyed by type.
 var registry = map[string]Provider{}
 
@@ -56,4 +66,26 @@ func All() []Info {
 		out = append(out, p.Info())
 	}
 	return out
+}
+
+func SupportsProvisioningWorkflow(providerType string) bool {
+	p := Get(providerType)
+	if p == nil {
+		return false
+	}
+	if workflowProvider, ok := p.(ProvisioningWorkflowProvider); ok {
+		return workflowProvider.SupportsProvisioningWorkflow()
+	}
+	return false
+}
+
+func SupportsServerMutationWorkflow(providerType string) bool {
+	p := Get(providerType)
+	if p == nil {
+		return false
+	}
+	if workflowProvider, ok := p.(ServerMutationWorkflowProvider); ok {
+		return workflowProvider.SupportsServerMutationWorkflow()
+	}
+	return false
 }

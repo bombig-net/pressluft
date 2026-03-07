@@ -15,6 +15,7 @@ import (
 	"pressluft/internal/observability"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/platform"
+	"pressluft/internal/provider"
 	"pressluft/internal/provider/hetzner"
 	"pressluft/internal/runner"
 	"pressluft/internal/security"
@@ -249,7 +250,7 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
 
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsProvisioningWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible provisioning", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -371,7 +372,7 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 	e.setServerStatus(ctx, server.ID, platform.ServerStatusConfiguring)
 	e.setSetupState(ctx, server.ID, platform.SetupStateRunning, "")
 
-	payloadBytes, err := json.Marshal(configureServerPayload{IPv4: result.IPv4})
+	payloadBytes, err := json.Marshal(orchestrator.ConfigureServerPayload{IPv4: result.IPv4})
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("marshal configure payload: %v", err))
 	}
@@ -399,36 +400,6 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 		Title:        fmt.Sprintf("Server '%s' provisioned", server.Name),
 	})
 	return nil
-}
-
-type deleteServerPayload struct {
-	ServerName string `json:"server_name"`
-}
-
-type rebuildServerPayload struct {
-	ServerName  string `json:"server_name"`
-	ServerImage string `json:"server_image"`
-}
-
-type configureServerPayload struct {
-	IPv4 string `json:"ipv4"`
-}
-
-type resizeServerPayload struct {
-	ServerType  string `json:"server_type"`
-	UpgradeDisk *bool  `json:"upgrade_disk"`
-}
-
-type updateFirewallsPayload struct {
-	Firewalls []string `json:"firewalls"`
-}
-
-type manageVolumePayload struct {
-	VolumeName string `json:"volume_name"`
-	SizeGB     int    `json:"size_gb"`
-	Location   string `json:"location"`
-	State      string `json:"state"`
-	Automount  *bool  `json:"automount"`
 }
 
 func (e *Executor) executeConfigureServer(ctx context.Context, job *orchestrator.Job) error {
@@ -463,8 +434,8 @@ func (e *Executor) executeConfigureServer(ctx context.Context, job *orchestrator
 		return e.failJob(ctx, job, "configure playbook path not configured")
 	}
 
-	var payload configureServerPayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	payload, err := orchestrator.UnmarshalConfigureServerPayload(job.Payload)
+	if err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
 	ipv4 := strings.TrimSpace(payload.IPv4)
@@ -530,7 +501,7 @@ func (e *Executor) executeDeleteServer(ctx context.Context, job *orchestrator.Jo
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsServerMutationWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible workflows", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -543,14 +514,10 @@ func (e *Executor) executeDeleteServer(ctx context.Context, job *orchestrator.Jo
 		return e.failJob(ctx, job, "delete playbook path not configured")
 	}
 
-	var payload deleteServerPayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	if _, err := orchestrator.UnmarshalDeleteServerPayload(job.Payload); err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
-	serverName := strings.TrimSpace(payload.ServerName)
-	if serverName == "" {
-		serverName = strings.TrimSpace(server.Name)
-	}
+	serverName := strings.TrimSpace(server.Name)
 	if serverName == "" {
 		return e.failJob(ctx, job, "server_name is required for delete_server job")
 	}
@@ -625,7 +592,7 @@ func (e *Executor) executeRebuildServer(ctx context.Context, job *orchestrator.J
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsServerMutationWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible workflows", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -638,14 +605,11 @@ func (e *Executor) executeRebuildServer(ctx context.Context, job *orchestrator.J
 		return e.failJob(ctx, job, "rebuild playbook path not configured")
 	}
 
-	var payload rebuildServerPayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	payload, err := orchestrator.UnmarshalRebuildServerPayload(job.Payload)
+	if err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
-	serverName := strings.TrimSpace(payload.ServerName)
-	if serverName == "" {
-		serverName = strings.TrimSpace(server.Name)
-	}
+	serverName := strings.TrimSpace(server.Name)
 	serverImage := strings.TrimSpace(payload.ServerImage)
 	if serverImage == "" {
 		serverImage = strings.TrimSpace(server.Image)
@@ -682,7 +646,7 @@ func (e *Executor) executeRebuildServer(ctx context.Context, job *orchestrator.J
 	if strings.TrimSpace(server.IPv4) == "" {
 		return e.failJob(ctx, job, "server IPv4 is required for rebuild follow-up setup")
 	}
-	configurePayload, err := json.Marshal(configureServerPayload{IPv4: server.IPv4})
+	configurePayload, err := json.Marshal(orchestrator.ConfigureServerPayload{IPv4: server.IPv4})
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("marshal rebuild configure payload: %v", err))
 	}
@@ -738,7 +702,7 @@ func (e *Executor) executeResizeServer(ctx context.Context, job *orchestrator.Jo
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsServerMutationWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible workflows", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -751,16 +715,13 @@ func (e *Executor) executeResizeServer(ctx context.Context, job *orchestrator.Jo
 		return e.failJob(ctx, job, "resize playbook path not configured")
 	}
 
-	var payload resizeServerPayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	payload, err := orchestrator.UnmarshalResizeServerPayload(job.Payload)
+	if err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
 	serverType := strings.TrimSpace(payload.ServerType)
 	if serverType == "" {
 		return e.failJob(ctx, job, "server_type is required for resize_server job")
-	}
-	if payload.UpgradeDisk == nil {
-		return e.failJob(ctx, job, "upgrade_disk is required for resize_server job")
 	}
 
 	e.emitStepComplete(ctx, job.ID, "validate", "Resize request validated")
@@ -772,7 +733,7 @@ func (e *Executor) executeResizeServer(ctx context.Context, job *orchestrator.Jo
 		"api_token":    storedProvider.APIToken,
 		"server_name":  server.Name,
 		"server_type":  serverType,
-		"upgrade_disk": strconv.FormatBool(*payload.UpgradeDisk),
+		"upgrade_disk": strconv.FormatBool(payload.UpgradeDisk),
 	}); err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("ansible resize failed: %v", err))
 	}
@@ -829,7 +790,7 @@ func (e *Executor) executeUpdateFirewalls(ctx context.Context, job *orchestrator
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsServerMutationWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible workflows", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -842,8 +803,8 @@ func (e *Executor) executeUpdateFirewalls(ctx context.Context, job *orchestrator
 		return e.failJob(ctx, job, "firewalls playbook path not configured")
 	}
 
-	var payload updateFirewallsPayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	payload, err := orchestrator.UnmarshalUpdateFirewallsPayload(job.Payload)
+	if err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
 	firewalls := make([]string, 0, len(payload.Firewalls))
@@ -920,7 +881,7 @@ func (e *Executor) executeManageVolume(ctx context.Context, job *orchestrator.Jo
 	if err != nil {
 		return e.failJob(ctx, job, fmt.Sprintf("provider not found: %v", err))
 	}
-	if storedProvider.Type != "hetzner" {
+	if !provider.SupportsServerMutationWorkflow(storedProvider.Type) {
 		return e.failJob(ctx, job, fmt.Sprintf("provider %s does not support ansible workflows", storedProvider.Type))
 	}
 	if strings.TrimSpace(storedProvider.APIToken) == "" {
@@ -933,8 +894,8 @@ func (e *Executor) executeManageVolume(ctx context.Context, job *orchestrator.Jo
 		return e.failJob(ctx, job, "volume playbook path not configured")
 	}
 
-	var payload manageVolumePayload
-	if err := parseJobPayload(job, &payload); err != nil {
+	payload, err := orchestrator.UnmarshalManageVolumePayload(job.Payload)
+	if err != nil {
 		return e.failJob(ctx, job, err.Error())
 	}
 	volumeName := strings.TrimSpace(payload.VolumeName)
@@ -1136,17 +1097,6 @@ func (e *Executor) runLocalPlaybook(ctx context.Context, jobID int64, playbookPa
 	}
 
 	return e.runner.Run(ctx, request, &runnerEventSink{jobStore: e.jobStore, jobID: jobID, logger: e.logger})
-}
-
-func parseJobPayload(job *orchestrator.Job, target any) error {
-	raw := strings.TrimSpace(job.Payload)
-	if raw == "" {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(raw), target); err != nil {
-		return fmt.Errorf("invalid job payload: %w", err)
-	}
-	return nil
 }
 
 func (e *Executor) completeJob(ctx context.Context, job *orchestrator.Job, step string) error {

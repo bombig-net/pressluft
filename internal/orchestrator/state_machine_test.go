@@ -63,3 +63,26 @@ func TestIsKnownJobKind(t *testing.T) {
 		t.Fatal("expected unknown kind to be rejected")
 	}
 }
+
+func TestWorkflowStepsForKind(t *testing.T) {
+	steps := WorkflowStepsForKind(string(JobKindRebuildServer))
+	if len(steps) != 3 {
+		t.Fatalf("len(steps) = %d, want 3", len(steps))
+	}
+	if steps[0].Key != "validate" || steps[1].Key != "rebuild" || steps[2].Key != "finalize" {
+		t.Fatalf("unexpected steps: %#v", steps)
+	}
+}
+
+func TestQueuedServerStatusForKind(t *testing.T) {
+	status, ok := QueuedServerStatusForKind(string(JobKindDeleteServer))
+	if !ok {
+		t.Fatal("expected delete_server queued status")
+	}
+	if status != "deleting" {
+		t.Fatalf("queued status = %q, want %q", status, "deleting")
+	}
+	if _, ok := QueuedServerStatusForKind(string(JobKindConfigureServer)); ok {
+		t.Fatal("expected configure_server to have no queued status")
+	}
+}

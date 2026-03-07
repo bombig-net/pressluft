@@ -1,28 +1,10 @@
 import { computed } from 'vue'
-
-export interface AuthActor {
-  id: string
-  type: string
-  email: string
-  role: string
-  authenticated: boolean
-  auth_source?: string
-}
+import type { AuthActor } from '~/lib/api-contract'
 
 export function useAuth() {
   const user = useState<AuthActor | null>('auth-user', () => null)
   const initialized = useState<boolean>('auth-initialized', () => false)
-  const config = useRuntimeConfig()
-
-  const apiFetch = async <T>(path: string, options: Parameters<typeof $fetch<T>>[1] = {}) => {
-    const requestHeaders = import.meta.server ? useRequestHeaders(['cookie']) : undefined
-    return await $fetch<T>(path, {
-      baseURL: config.public.apiBase,
-      credentials: 'include',
-      headers: requestHeaders,
-      ...options,
-    })
-  }
+  const { apiFetch } = useApiClient()
 
   const fetchMe = async () => {
     try {

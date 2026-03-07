@@ -49,6 +49,13 @@ type JobKindSpec struct {
 	TimeoutSeconds  int64    `json:"timeout_seconds"`
 	RetryLimit      int      `json:"retry_limit"`
 	Recovery        string   `json:"recovery"`
+	QueuedStatus    string   `json:"queued_server_status,omitempty"`
+	Steps           []Step   `json:"steps"`
+}
+
+type Step struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
 }
 
 type EnvVarDoc struct {
@@ -115,9 +122,13 @@ func RenderTypeScriptModule() (string, error) {
 	out.WriteString("export type JobTerminalStatus = typeof platformContract.job_terminal_statuses[number]\n")
 	out.WriteString("export type JobKind = typeof platformContract.job_kinds[number][\"kind\"]\n")
 	out.WriteString("export type JobKindSpec = typeof platformContract.job_kinds[number]\n")
+	out.WriteString("export type WorkflowStep = typeof platformContract.job_kinds[number][\"steps\"][number]\n")
 	out.WriteString("export const jobKindLabels: Record<JobKind, string> = Object.fromEntries(\n")
 	out.WriteString("  platformContract.job_kinds.map((spec) => [spec.kind, spec.label]),\n")
 	out.WriteString(") as Record<JobKind, string>\n")
+	out.WriteString("export const jobKindSteps: Record<JobKind, readonly WorkflowStep[]> = Object.fromEntries(\n")
+	out.WriteString("  platformContract.job_kinds.map((spec) => [spec.kind, spec.steps]),\n")
+	out.WriteString(") as Record<JobKind, readonly WorkflowStep[]>\n")
 	out.WriteString("export const inProgressServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.in_progress\n")
 	out.WriteString("export const mutationBlockedServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.mutation_blocked\n")
 	out.WriteString("export const destructiveServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.destructive\n")
@@ -139,11 +150,21 @@ func jobKindSpecs() []JobKindSpec {
 			TimeoutSeconds:  int64(spec.Timeout / time.Second),
 			RetryLimit:      spec.RetryLimit,
 			Recovery:        spec.Recovery,
+			QueuedStatus:    string(spec.QueuedStatus),
+			Steps:           toSteps(spec.Steps),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Kind < out[j].Kind
 	})
+	return out
+}
+
+func toSteps(steps []orchestrator.WorkflowStep) []Step {
+	out := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, Step{Key: step.Key, Label: step.Label})
+	}
 	return out
 }
 

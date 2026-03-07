@@ -145,12 +145,12 @@ const selectItemClass =
 const buttonBaseClass =
   "rounded-lg focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 
+const { apiFetch } = useApiClient()
+
 onMounted(async () => {
   await Promise.all([fetchProviders(), fetchServers()])
-  fetch('/api/health')
-    .then(async (res) => {
-      if (!res.ok) return
-      const body = await res.json()
+  apiFetch<{ callback_url_mode?: string; callback_url_warning?: string }>('/health')
+    .then((body) => {
       callbackMode.value = body.callback_url_mode || "unknown"
       callbackWarning.value = body.callback_url_warning || ""
     })

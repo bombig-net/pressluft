@@ -89,7 +89,21 @@ export const platformContract = {
       "experimental": false,
       "timeout_seconds": 1800,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; retry setup manually after inspection"
+      "recovery": "mark failed on worker interruption; retry setup manually after inspection",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "configure",
+          "label": "Configuring server"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "delete_server",
@@ -104,7 +118,22 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 1200,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; verify provider-side deletion before retrying manually"
+      "recovery": "mark failed on worker interruption; verify provider-side deletion before retrying manually",
+      "queued_server_status": "deleting",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "delete",
+          "label": "Deleting server"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "manage_volume",
@@ -119,7 +148,21 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 1200,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; retry manually after inspection"
+      "recovery": "mark failed on worker interruption; retry manually after inspection",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "manage_volume",
+          "label": "Managing volume"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "provision_server",
@@ -134,7 +177,17 @@ export const platformContract = {
       "experimental": false,
       "timeout_seconds": 1800,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; inspect provider state before retrying manually"
+      "recovery": "mark failed on worker interruption; inspect provider state before retrying manually",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "provision",
+          "label": "Provisioning infrastructure"
+        }
+      ]
     },
     {
       "kind": "rebuild_server",
@@ -149,7 +202,22 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 2700,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; inspect machine state before retrying manually"
+      "recovery": "mark failed on worker interruption; inspect machine state before retrying manually",
+      "queued_server_status": "rebuilding",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "rebuild",
+          "label": "Rebuilding server"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "resize_server",
@@ -164,7 +232,22 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 1200,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; inspect provider-side resize state before retrying manually"
+      "recovery": "mark failed on worker interruption; inspect provider-side resize state before retrying manually",
+      "queued_server_status": "resizing",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "resize",
+          "label": "Resizing server"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "restart_service",
@@ -179,7 +262,21 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 120,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption or timeout; late agent results are ignored"
+      "recovery": "mark failed on worker interruption or timeout; late agent results are ignored",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "restart_service",
+          "label": "Restarting service"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     },
     {
       "kind": "update_firewalls",
@@ -194,7 +291,21 @@ export const platformContract = {
       "experimental": true,
       "timeout_seconds": 900,
       "retry_limit": 0,
-      "recovery": "mark failed on worker interruption; retry manually after inspection"
+      "recovery": "mark failed on worker interruption; retry manually after inspection",
+      "steps": [
+        {
+          "key": "validate",
+          "label": "Validating request"
+        },
+        {
+          "key": "update_firewalls",
+          "label": "Updating firewalls"
+        },
+        {
+          "key": "finalize",
+          "label": "Finalizing"
+        }
+      ]
     }
   ],
   "config_scopes": {
@@ -369,9 +480,13 @@ export type JobStatus = typeof platformContract.job_statuses[number]
 export type JobTerminalStatus = typeof platformContract.job_terminal_statuses[number]
 export type JobKind = typeof platformContract.job_kinds[number]["kind"]
 export type JobKindSpec = typeof platformContract.job_kinds[number]
+export type WorkflowStep = typeof platformContract.job_kinds[number]["steps"][number]
 export const jobKindLabels: Record<JobKind, string> = Object.fromEntries(
   platformContract.job_kinds.map((spec) => [spec.kind, spec.label]),
 ) as Record<JobKind, string>
+export const jobKindSteps: Record<JobKind, readonly WorkflowStep[]> = Object.fromEntries(
+  platformContract.job_kinds.map((spec) => [spec.kind, spec.steps]),
+) as Record<JobKind, readonly WorkflowStep[]>
 export const inProgressServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.in_progress
 export const mutationBlockedServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.mutation_blocked
 export const destructiveServerStatuses: readonly ServerStatus[] = platformContract.server_status_groups.destructive
