@@ -28,7 +28,7 @@ func TestServerStoreCreateAndList(t *testing.T) {
 		ServerType:   "cx22",
 		Image:        "ubuntu-24.04",
 		ProfileKey:   "nginx-stack",
-		Status:       "provisioning",
+		Status:       platform.ServerStatusProvisioning,
 	})
 	if err != nil {
 		t.Fatalf("create server: %v", err)
@@ -77,13 +77,13 @@ func TestServerStoreUpdateProvisioning(t *testing.T) {
 		ServerType:   "cx22",
 		Image:        "ubuntu-24.04",
 		ProfileKey:   "woocommerce-optimized",
-		Status:       "provisioning",
+		Status:       platform.ServerStatusProvisioning,
 	})
 	if err != nil {
 		t.Fatalf("create server: %v", err)
 	}
 
-	err = store.UpdateProvisioning(context.Background(), serverID, "123456", "9876", "running", "provisioning", "203.0.113.10", "2001:db8::10")
+	err = store.UpdateProvisioning(context.Background(), serverID, "123456", "9876", "running", platform.ServerStatusProvisioning, "203.0.113.10", "2001:db8::10")
 	if err != nil {
 		t.Fatalf("update provisioning: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestServerStoreQueueServerJobUpdatesLifecycleStatus(t *testing.T) {
 		ServerType:   "cx22",
 		Image:        "ubuntu-24.04",
 		ProfileKey:   "nginx-stack",
-		Status:       string(platform.ServerStatusReady),
+		Status:       platform.ServerStatusReady,
 	})
 	if err != nil {
 		t.Fatalf("create server: %v", err)
@@ -132,7 +132,7 @@ func TestServerStoreQueueServerJobUpdatesLifecycleStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue server job: %v", err)
 	}
-	if server.Status != string(platform.ServerStatusDeleting) {
+	if server.Status != platform.ServerStatusDeleting {
 		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusDeleting)
 	}
 	if job.Status != orchestrator.JobStatusQueued {
@@ -182,7 +182,7 @@ func TestServerStoreUpdateNodeStatusPersistsOnlineHeartbeat(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, string(platform.ServerStatusReady))
 	lastSeen := time.Now().UTC().Format(time.RFC3339)
 
-	if err := store.UpdateNodeStatus(context.Background(), serverID, "online", lastSeen, "1.2.3"); err != nil {
+	if err := store.UpdateNodeStatus(context.Background(), serverID, platform.NodeStatusOnline, lastSeen, "1.2.3"); err != nil {
 		t.Fatalf("update node status: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestServerStoreUpdateNodeStatusPersistsOnlineHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get server: %v", err)
 	}
-	if server.NodeStatus != "online" || server.NodeLastSeen != lastSeen || server.NodeVersion != "1.2.3" {
+	if server.NodeStatus != platform.NodeStatusOnline || server.NodeLastSeen != lastSeen || server.NodeVersion != "1.2.3" {
 		t.Fatalf("server node state = %+v, want persisted online heartbeat", server)
 	}
 }
@@ -203,10 +203,10 @@ func TestServerStoreMarkNodesOfflineBeforeOnlyUpdatesStaleNodes(t *testing.T) {
 
 	staleLastSeen := time.Now().Add(-4 * time.Minute).UTC().Format(time.RFC3339)
 	freshLastSeen := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
-	if err := store.UpdateNodeStatus(context.Background(), staleID, "unhealthy", staleLastSeen, "v1"); err != nil {
+	if err := store.UpdateNodeStatus(context.Background(), staleID, platform.NodeStatusUnhealthy, staleLastSeen, "v1"); err != nil {
 		t.Fatalf("seed stale node: %v", err)
 	}
-	if err := store.UpdateNodeStatus(context.Background(), freshID, "online", freshLastSeen, "v2"); err != nil {
+	if err := store.UpdateNodeStatus(context.Background(), freshID, platform.NodeStatusOnline, freshLastSeen, "v2"); err != nil {
 		t.Fatalf("seed fresh node: %v", err)
 	}
 
@@ -226,10 +226,10 @@ func TestServerStoreMarkNodesOfflineBeforeOnlyUpdatesStaleNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get fresh server: %v", err)
 	}
-	if staleServer.NodeStatus != "offline" {
+	if staleServer.NodeStatus != platform.NodeStatusOffline {
 		t.Fatalf("stale status = %q, want offline", staleServer.NodeStatus)
 	}
-	if freshServer.NodeStatus != "online" {
+	if freshServer.NodeStatus != platform.NodeStatusOnline {
 		t.Fatalf("fresh status = %q, want online", freshServer.NodeStatus)
 	}
 }

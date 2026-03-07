@@ -28,6 +28,7 @@ UNIT_TEST_PACKAGES := \
 	./internal/agent \
 	./internal/agentauth \
 	./internal/agentcommand \
+	./internal/auth \
 	./internal/contract \
 	./internal/database \
 	./internal/dispatch \
@@ -55,13 +56,14 @@ ANSIBLE_PLAYBOOKS := \
 	ops/ansible/playbooks/resize_server.yml \
 	ops/ansible/playbooks/update_firewalls.yml
 
-.PHONY: help prepare-env generate-contract contract-json frontend-install frontend-generate embed-web build app-build agent agent-dev all dev dev-lab dev-status dev-reset run format fmt-check lint test test-unit test-integration validate-go validate-web validate-profiles validate-profile-schema validate-profile-consistency ansible-syntax ansible-check ansible-validate validate test-smoke smoke clean
+.PHONY: help prepare-env generate-contract generate-api-contract contract-json frontend-install frontend-generate embed-web build app-build agent agent-dev all dev dev-lab dev-status dev-reset run format fmt-check lint test test-unit test-integration validate-go validate-web validate-profiles validate-profile-schema validate-profile-consistency ansible-syntax ansible-check ansible-validate validate test-smoke smoke clean
 
 help:
 	@printf '%s\n' 'Targets:'
 	@printf '  %-28s %s\n' 'help' 'Show supported build and validation targets'
 	@printf '  %-28s %s\n' 'prepare-env' 'Create writable cache and temp directories for local tooling'
 	@printf '  %-28s %s\n' 'generate-contract' 'Refresh the generated TS runtime contract from Go'
+	@printf '  %-28s %s\n' 'generate-api-contract' 'Refresh the generated TS HTTP API contract from Go'
 	@printf '  %-28s %s\n' 'contract-json' 'Print the runtime contract and env config contract as JSON'
 	@printf '  %-28s %s\n' 'frontend-generate' 'Build the Nuxt static frontend into web/.output/public'
 	@printf '  %-28s %s\n' 'build' 'Generate the frontend, embed it, and build the control-plane binary'
@@ -83,6 +85,10 @@ prepare-env:
 
 generate-contract: prepare-env
 	$(GO_ENV) $(GO) run ./cmd/pressluft-contractgen -format ts > "$(WEB_DIR)/app/lib/platform-contract.generated.ts"
+	$(GO_ENV) $(GO) run ./cmd/pressluft-contractgen -format api-ts > "$(WEB_DIR)/app/lib/api-contract.ts"
+
+generate-api-contract: prepare-env
+	$(GO_ENV) $(GO) run ./cmd/pressluft-contractgen -format api-ts > "$(WEB_DIR)/app/lib/api-contract.ts"
 
 contract-json: prepare-env
 	$(GO_ENV) $(GO) run ./cmd/pressluft-contractgen -format json

@@ -116,6 +116,7 @@ func userToActor(user User, source string) Actor {
 		Type:          ActorTypeOperator,
 		Email:         user.Email,
 		Role:          user.Role,
+		Capabilities:  RoleCapabilities(user.Role),
 		Authenticated: true,
 		AuthSource:    source,
 	}

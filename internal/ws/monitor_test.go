@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"pressluft/internal/platform"
 )
 
 type monitorStore struct {
@@ -13,7 +15,7 @@ type monitorStore struct {
 	offlineCalls int
 }
 
-func (s *monitorStore) UpdateNodeStatus(_ context.Context, serverID int64, status, lastSeen, version string) error {
+func (s *monitorStore) UpdateNodeStatus(_ context.Context, serverID int64, status platform.NodeStatus, lastSeen, version string) error {
 	s.updates = append(s.updates, nodeStatusUpdate{serverID: serverID, status: status, lastSeen: lastSeen, version: version})
 	return nil
 }

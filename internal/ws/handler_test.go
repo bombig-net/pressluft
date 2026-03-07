@@ -13,7 +13,7 @@ import (
 
 type nodeStatusUpdate struct {
 	serverID int64
-	status   string
+	status   platform.NodeStatus
 	lastSeen string
 	version  string
 }
@@ -23,7 +23,7 @@ type recordingNodeStatusStore struct {
 	updates []nodeStatusUpdate
 }
 
-func (s *recordingNodeStatusStore) UpdateNodeStatus(_ context.Context, serverID int64, status, lastSeen, version string) error {
+func (s *recordingNodeStatusStore) UpdateNodeStatus(_ context.Context, serverID int64, status platform.NodeStatus, lastSeen, version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.updates = append(s.updates, nodeStatusUpdate{serverID: serverID, status: status, lastSeen: lastSeen, version: version})
@@ -57,7 +57,7 @@ func TestHandlerHeartbeatPersistsOnlineAndUpdatesState(t *testing.T) {
 	if cpuPercent != 10 || memUsedMB != 64 || memTotalMB != 128 {
 		t.Fatalf("connection metrics = (%v, %d, %d), want (10, 64, 128)", cpuPercent, memUsedMB, memTotalMB)
 	}
-	if got := store.latest(); got.status != string(platform.NodeStatusOnline) || got.version != "1.2.3" {
+	if got := store.latest(); got.status != platform.NodeStatusOnline || got.version != "1.2.3" {
 		t.Fatalf("latest update = %+v, want online with version", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestHandleConnectionMarksNodeUnhealthyOnDisconnect(t *testing.T) {
 	if _, ok := hub.Get(9); ok {
 		t.Fatal("expected connection to be unregistered")
 	}
-	if got := store.latest(); got.status != string(platform.NodeStatusUnhealthy) {
+	if got := store.latest(); got.status != platform.NodeStatusUnhealthy {
 		t.Fatalf("latest update = %+v, want unhealthy", got)
 	}
 }

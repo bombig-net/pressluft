@@ -367,7 +367,7 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		ServerType:   req.ServerType,
 		Image:        profile.Image,
 		ProfileKey:   req.ProfileKey,
-		Status:       "pending",
+		Status:       platform.ServerStatusPending,
 	})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to create server record: "+err.Error())
@@ -382,7 +382,7 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// Rollback: mark server as failed since we couldn't create the job
-		_ = sh.serverStore.UpdateStatus(r.Context(), serverID, "failed")
+		_ = sh.serverStore.UpdateStatus(r.Context(), serverID, platform.ServerStatusFailed)
 		respondError(w, http.StatusInternalServerError, "failed to create provisioning job: "+err.Error())
 		return
 	}
@@ -413,7 +413,7 @@ func (sh *serversHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusAccepted, map[string]any{
 		"server_id": serverID,
 		"job_id":    job.ID,
-		"status":    "pending",
+		"status":    platform.ServerStatusPending,
 	})
 	slog.Default().Info("server action queued", "action", "create_server", "server_id", serverID, "job_id", job.ID, "server_status", platform.ServerStatusPending)
 }
@@ -787,8 +787,8 @@ func (sh *serversHandler) handleListServices(w http.ResponseWriter, r *http.Requ
 
 func storedAgentInfo(server StoredServer) ws.AgentInfo {
 	status := platform.NodeStatusUnknown
-	if server.NodeStatus != "" {
-		status = platform.NodeStatus(server.NodeStatus)
+	if server.NodeStatus != platform.NodeStatus("") {
+		status = server.NodeStatus
 	}
 	info := ws.AgentInfo{
 		Connected: status == platform.NodeStatusOnline,

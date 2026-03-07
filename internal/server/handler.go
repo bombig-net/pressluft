@@ -86,10 +86,10 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 			store:         provider.NewStore(db),
 			activityStore: activityStore,
 		}
-		operatorMux.Handle("/api/providers", authorize(http.HandlerFunc(ph.route), auth.CanManageProviders))
-		operatorMux.Handle("/api/providers/", authorize(http.HandlerFunc(ph.routeWithID), auth.CanManageProviders))
-		operatorMux.Handle("/api/providers/validate", authorize(withRateLimit(http.HandlerFunc(ph.handleValidate), newRateLimiter(15, time.Minute), "provider-validate"), auth.CanManageProviders))
-		operatorMux.Handle("/api/providers/types", authorize(http.HandlerFunc(ph.handleTypes), auth.CanManageProviders))
+		operatorMux.Handle("/api/providers", authorize(http.HandlerFunc(ph.route), auth.RequireCapability(auth.CapabilityManageProviders)))
+		operatorMux.Handle("/api/providers/", authorize(http.HandlerFunc(ph.routeWithID), auth.RequireCapability(auth.CapabilityManageProviders)))
+		operatorMux.Handle("/api/providers/validate", authorize(withRateLimit(http.HandlerFunc(ph.handleValidate), newRateLimiter(15, time.Minute), "provider-validate"), auth.RequireCapability(auth.CapabilityManageProviders)))
+		operatorMux.Handle("/api/providers/types", authorize(http.HandlerFunc(ph.handleTypes), auth.RequireCapability(auth.CapabilityManageProviders)))
 
 		jobStore := orchestrator.NewStore(db)
 		serverStore := NewServerStore(db)
@@ -101,20 +101,20 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 			activityStore: activityStore,
 			hub:           hub,
 		}
-		operatorMux.Handle("/api/servers", authorize(withRateLimit(http.HandlerFunc(sh.route), newRateLimiter(30, time.Minute), "servers"), auth.CanManageServers))
-		operatorMux.Handle("/api/servers/", authorize(withRateLimit(http.HandlerFunc(sh.routeWithPath), newRateLimiter(60, time.Minute), "servers-path"), auth.CanManageServers))
+		operatorMux.Handle("/api/servers", authorize(withRateLimit(http.HandlerFunc(sh.route), newRateLimiter(30, time.Minute), "servers"), auth.RequireCapability(auth.CapabilityManageServers)))
+		operatorMux.Handle("/api/servers/", authorize(withRateLimit(http.HandlerFunc(sh.routeWithPath), newRateLimiter(60, time.Minute), "servers-path"), auth.RequireCapability(auth.CapabilityManageServers)))
 
 		jh := &jobsHandler{
 			store:         jobStore,
 			serverStore:   serverStore,
 			activityStore: activityStore,
 		}
-		operatorMux.Handle("/api/jobs", authorize(withRateLimit(http.HandlerFunc(jh.route), newRateLimiter(30, time.Minute), "jobs"), auth.CanQueueJobs))
-		operatorMux.Handle("/api/jobs/", authorize(http.HandlerFunc(jh.routeWithID), auth.CanQueueJobs))
+		operatorMux.Handle("/api/jobs", authorize(withRateLimit(http.HandlerFunc(jh.route), newRateLimiter(30, time.Minute), "jobs"), auth.RequireCapability(auth.CapabilityQueueJobs)))
+		operatorMux.Handle("/api/jobs/", authorize(http.HandlerFunc(jh.routeWithID), auth.RequireCapability(auth.CapabilityQueueJobs)))
 
 		ah := &activityHandler{store: activityStore}
-		operatorMux.Handle("/api/activity", authorize(http.HandlerFunc(ah.route), auth.CanReadActivity))
-		operatorMux.Handle("/api/activity/", authorize(http.HandlerFunc(ah.routeWithID), auth.CanReadActivity))
+		operatorMux.Handle("/api/activity", authorize(http.HandlerFunc(ah.route), auth.RequireCapability(auth.CapabilityReadActivity)))
+		operatorMux.Handle("/api/activity/", authorize(http.HandlerFunc(ah.routeWithID), auth.RequireCapability(auth.CapabilityReadActivity)))
 
 		// Inject activity handler into servers handler for /api/servers/{id}/activity
 		sh.activityHandler = ah

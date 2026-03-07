@@ -15,12 +15,13 @@ const (
 )
 
 type Actor struct {
-	ID            string    `json:"id"`
-	Type          ActorType `json:"type"`
-	Email         string    `json:"email"`
-	Role          Role      `json:"role"`
-	Authenticated bool      `json:"authenticated"`
-	AuthSource    string    `json:"auth_source,omitempty"`
+	ID            string       `json:"id"`
+	Type          ActorType    `json:"type"`
+	Email         string       `json:"email"`
+	Role          Role         `json:"role"`
+	Capabilities  []Capability `json:"capabilities,omitempty"`
+	Authenticated bool         `json:"authenticated"`
+	AuthSource    string       `json:"auth_source,omitempty"`
 }
 
 func AnonymousActor() Actor {

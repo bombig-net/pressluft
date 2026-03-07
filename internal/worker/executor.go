@@ -25,9 +25,9 @@ import (
 // ServerStore defines the server persistence interface needed by the executor.
 type ServerStore interface {
 	GetByID(ctx context.Context, id int64) (*StoredServer, error)
-	UpdateStatus(ctx context.Context, id int64, status string) error
-	UpdateSetupState(ctx context.Context, id int64, setupState, setupLastError string) error
-	UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error
+	UpdateStatus(ctx context.Context, id int64, status platform.ServerStatus) error
+	UpdateSetupState(ctx context.Context, id int64, setupState platform.SetupState, setupLastError string) error
+	UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus string, status platform.ServerStatus, ipv4, ipv6 string) error
 	UpdateServerType(ctx context.Context, id int64, serverType string) error
 	UpdateImage(ctx context.Context, id int64, image string) error
 	GetKey(ctx context.Context, serverID int64) (*StoredServerKey, error)
@@ -47,8 +47,8 @@ type StoredServer struct {
 	ServerType       string
 	Image            string
 	ProfileKey       string
-	Status           string
-	SetupState       string
+	Status           platform.ServerStatus
+	SetupState       platform.SetupState
 	SetupLastError   string
 }
 
@@ -364,7 +364,7 @@ func (e *Executor) executeProvisionServer(ctx context.Context, job *orchestrator
 	}
 
 	providerServerID := strconv.FormatInt(result.ID, 10)
-	if err := e.serverStore.UpdateProvisioning(ctx, server.ID, providerServerID, "", "", string(platform.ServerStatusProvisioning), result.IPv4, result.IPv6); err != nil {
+	if err := e.serverStore.UpdateProvisioning(ctx, server.ID, providerServerID, "", "", platform.ServerStatusProvisioning, result.IPv4, result.IPv6); err != nil {
 		e.logger.Error("failed to update server provisioning state", "error", err)
 	}
 
@@ -539,7 +539,7 @@ func (e *Executor) executeDeleteServer(ctx context.Context, job *orchestrator.Jo
 	e.updateStep(ctx, job.ID, "finalize")
 	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing delete")
 
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, string(platform.ServerStatusDeleted)); err != nil {
+	if err := e.serverStore.UpdateStatus(ctx, server.ID, platform.ServerStatusDeleted); err != nil {
 		e.logger.Error("failed to update server status to deleted", "error", err)
 	}
 
@@ -746,7 +746,7 @@ func (e *Executor) executeResizeServer(ctx context.Context, job *orchestrator.Jo
 	if err := e.serverStore.UpdateServerType(ctx, server.ID, serverType); err != nil {
 		e.logger.Error("failed to update server type", "error", err)
 	}
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, string(platform.ServerStatusReady)); err != nil {
+	if err := e.serverStore.UpdateStatus(ctx, server.ID, platform.ServerStatusReady); err != nil {
 		e.logger.Error("failed to update server status to ready", "error", err)
 	}
 
@@ -837,7 +837,7 @@ func (e *Executor) executeUpdateFirewalls(ctx context.Context, job *orchestrator
 	e.updateStep(ctx, job.ID, "finalize")
 	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing firewall update")
 
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, "ready"); err != nil {
+	if err := e.serverStore.UpdateStatus(ctx, server.ID, platform.ServerStatusReady); err != nil {
 		e.logger.Error("failed to update server status to ready", "error", err)
 	}
 
@@ -942,7 +942,7 @@ func (e *Executor) executeManageVolume(ctx context.Context, job *orchestrator.Jo
 	e.updateStep(ctx, job.ID, "finalize")
 	e.emitStepStart(ctx, job.ID, "finalize", "Finalizing volume workflow")
 
-	if err := e.serverStore.UpdateStatus(ctx, server.ID, "ready"); err != nil {
+	if err := e.serverStore.UpdateStatus(ctx, server.ID, platform.ServerStatusReady); err != nil {
 		e.logger.Error("failed to update server status to ready", "error", err)
 	}
 
@@ -1059,7 +1059,7 @@ func (e *Executor) setServerStatus(ctx context.Context, serverID int64, status p
 	if serverID <= 0 || strings.TrimSpace(string(status)) == "" {
 		return
 	}
-	if err := e.serverStore.UpdateStatus(ctx, serverID, string(status)); err != nil {
+	if err := e.serverStore.UpdateStatus(ctx, serverID, status); err != nil {
 		e.logger.Error("server status persistence failed", "server_id", serverID, "server_status", status, "error", err)
 		return
 	}
@@ -1070,7 +1070,7 @@ func (e *Executor) setSetupState(ctx context.Context, serverID int64, setupState
 	if serverID <= 0 || strings.TrimSpace(string(setupState)) == "" {
 		return
 	}
-	if err := e.serverStore.UpdateSetupState(ctx, serverID, string(setupState), setupLastError); err != nil {
+	if err := e.serverStore.UpdateSetupState(ctx, serverID, setupState, setupLastError); err != nil {
 		e.logger.Error("server setup state persistence failed", "server_id", serverID, "setup_state", setupState, "error", err)
 		return
 	}
@@ -1135,7 +1135,7 @@ func (e *Executor) failJob(ctx context.Context, job *orchestrator.Job, errMsg st
 	if job.ServerID > 0 {
 		if job.Kind == string(orchestrator.JobKindConfigureServer) {
 			e.setSetupState(ctx, job.ServerID, platform.SetupStateDegraded, errMsg)
-		} else if err := e.serverStore.UpdateStatus(ctx, job.ServerID, string(platform.ServerStatusFailed)); err != nil {
+		} else if err := e.serverStore.UpdateStatus(ctx, job.ServerID, platform.ServerStatusFailed); err != nil {
 			e.logger.Error("server failure status persistence failed", corr.LogArgs("server_status", platform.ServerStatusFailed, "error", err)...)
 		}
 	}

@@ -1,11 +1,13 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"pressluft/internal/agentcommand"
 	"pressluft/internal/platform"
 )
 
@@ -50,11 +52,13 @@ type JobKindSpec struct {
 	AllowedStatuses []JobStatus
 	Destructive     bool
 	Experimental    bool
+	ExecutionPath   string
 	Timeout         time.Duration
 	RetryLimit      int
 	Recovery        string
 	QueuedStatus    platform.ServerStatus
 	Steps           []WorkflowStep
+	ValidatePayload JobPayloadValidator
 }
 
 type WorkflowStep struct {
@@ -62,15 +66,17 @@ type WorkflowStep struct {
 	Label string
 }
 
+type JobPayloadValidator func(json.RawMessage, int64) (string, error)
+
 var supportedJobKinds = []JobKindSpec{
-	{Kind: JobKindProvisionServer, Label: "Server infrastructure provisioning", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider state before retrying manually", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "provision", Label: "Provisioning infrastructure"}}},
-	{Kind: JobKindConfigureServer, Label: "Server setup", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry setup manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "configure", Label: "Configuring server"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindDeleteServer, Label: "Server deletion", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; verify provider-side deletion before retrying manually", QueuedStatus: platform.ServerStatusDeleting, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "delete", Label: "Deleting server"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindRebuildServer, Label: "Server rebuild", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, Timeout: 45 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect machine state before retrying manually", QueuedStatus: platform.ServerStatusRebuilding, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "rebuild", Label: "Rebuilding server"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindResizeServer, Label: "Server resize", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider-side resize state before retrying manually", QueuedStatus: platform.ServerStatusResizing, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "resize", Label: "Resizing server"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindUpdateFirewalls, Label: "Firewall update", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, Timeout: 15 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "update_firewalls", Label: "Updating firewalls"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindManageVolume, Label: "Volume management", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "manage_volume", Label: "Managing volume"}, {Key: "finalize", Label: "Finalizing"}}},
-	{Kind: JobKindRestartService, Label: "Service restart", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, Timeout: 2 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption or timeout; late agent results are ignored", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "restart_service", Label: "Restarting service"}, {Key: "finalize", Label: "Finalizing"}}},
+	{Kind: JobKindProvisionServer, Label: "Server infrastructure provisioning", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider state before retrying manually", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "provision", Label: "Provisioning infrastructure"}}, ValidatePayload: validateProvisionServerPayload},
+	{Kind: JobKindConfigureServer, Label: "Server setup", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, ExecutionPath: "worker", Timeout: 30 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry setup manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "configure", Label: "Configuring server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateConfigureServerPayload},
+	{Kind: JobKindDeleteServer, Label: "Server deletion", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; verify provider-side deletion before retrying manually", QueuedStatus: platform.ServerStatusDeleting, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "delete", Label: "Deleting server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateDeleteServerPayload},
+	{Kind: JobKindRebuildServer, Label: "Server rebuild", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 45 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect machine state before retrying manually", QueuedStatus: platform.ServerStatusRebuilding, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "rebuild", Label: "Rebuilding server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRebuildServerPayload},
+	{Kind: JobKindResizeServer, Label: "Server resize", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Destructive: true, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; inspect provider-side resize state before retrying manually", QueuedStatus: platform.ServerStatusResizing, Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "resize", Label: "Resizing server"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateResizeServerPayload},
+	{Kind: JobKindUpdateFirewalls, Label: "Firewall update", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", Timeout: 15 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "update_firewalls", Label: "Updating firewalls"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateUpdateFirewallsPayload},
+	{Kind: JobKindManageVolume, Label: "Volume management", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "worker", Timeout: 20 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption; retry manually after inspection", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "manage_volume", Label: "Managing volume"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateManageVolumePayload},
+	{Kind: JobKindRestartService, Label: "Service restart", AllowedStatuses: []JobStatus{JobStatusQueued, JobStatusRunning, JobStatusSucceeded, JobStatusFailed}, Experimental: true, ExecutionPath: "agent", Timeout: 2 * time.Minute, RetryLimit: 0, Recovery: "mark failed on worker interruption or timeout; late agent results are ignored", Steps: []WorkflowStep{{Key: "validate", Label: "Validating request"}, {Key: "restart_service", Label: "Restarting service"}, {Key: "finalize", Label: "Finalizing"}}, ValidatePayload: validateRestartServicePayload},
 }
 
 // SupportedJobKinds returns the current canonical job-kind contract.
@@ -131,6 +137,17 @@ func QueuedServerStatusForKind(kind string) (platform.ServerStatus, bool) {
 		return "", false
 	}
 	return spec.QueuedStatus, true
+}
+
+func ValidatePayload(kind string, payload json.RawMessage, serverID int64) (string, error) {
+	spec, ok := JobKindPolicy(kind)
+	if !ok {
+		return "", fmt.Errorf("unsupported job kind: %s", kind)
+	}
+	if spec.ValidatePayload == nil {
+		return normalizeArbitraryPayload(payload), nil
+	}
+	return spec.ValidatePayload(payload, serverID)
 }
 
 type ConfigureServerPayload struct {
@@ -279,6 +296,158 @@ func unmarshalNormalizedPayload(raw string, target any) error {
 		return fmt.Errorf("invalid normalized job payload: %w", err)
 	}
 	return nil
+}
+
+func normalizeArbitraryPayload(payload json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(bytes.TrimSpace(payload)))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	return trimmed
+}
+
+func requireServerID(serverID int64, kind JobKind) error {
+	if serverID <= 0 {
+		return fmt.Errorf("server_id is required for %s job", kind)
+	}
+	return nil
+}
+
+func validateProvisionServerPayload(payload json.RawMessage, _ int64) (string, error) {
+	return normalizeArbitraryPayload(payload), nil
+}
+
+func validateConfigureServerPayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindConfigureServer); err != nil {
+		return "", err
+	}
+	if normalizeArbitraryPayload(payload) == "" {
+		return MarshalConfigureServerPayload(ConfigureServerPayload{})
+	}
+	var parsed struct {
+		IPv4 string `json:"ipv4"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(payload), &parsed); err != nil {
+		return "", fmt.Errorf("invalid configure_server payload: %w", err)
+	}
+	return MarshalConfigureServerPayload(ConfigureServerPayload{IPv4: parsed.IPv4})
+}
+
+func validateDeleteServerPayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindDeleteServer); err != nil {
+		return "", err
+	}
+	if normalizeArbitraryPayload(payload) == "" {
+		return "", nil
+	}
+	var parsed DeleteServerPayload
+	if err := json.Unmarshal(bytes.TrimSpace(payload), &parsed); err != nil {
+		return "", fmt.Errorf("invalid delete_server payload: %w", err)
+	}
+	return MarshalDeleteServerPayload()
+}
+
+func validateRebuildServerPayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindRebuildServer); err != nil {
+		return "", err
+	}
+	if normalizeArbitraryPayload(payload) == "" {
+		return MarshalRebuildServerPayload(RebuildServerPayload{})
+	}
+	var parsed RebuildServerPayload
+	if err := json.Unmarshal(bytes.TrimSpace(payload), &parsed); err != nil {
+		return "", fmt.Errorf("invalid rebuild_server payload: %w", err)
+	}
+	return MarshalRebuildServerPayload(parsed)
+}
+
+func validateResizeServerPayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindResizeServer); err != nil {
+		return "", err
+	}
+	var parsed struct {
+		ServerType  string `json:"server_type"`
+		UpgradeDisk *bool  `json:"upgrade_disk"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(defaultPayloadObject(payload)), &parsed); err != nil {
+		return "", fmt.Errorf("invalid resize_server payload: %w", err)
+	}
+	if strings.TrimSpace(parsed.ServerType) == "" {
+		return "", fmt.Errorf("server_type is required for resize_server job")
+	}
+	if parsed.UpgradeDisk == nil {
+		return "", fmt.Errorf("upgrade_disk is required for resize_server job")
+	}
+	return MarshalResizeServerPayload(ResizeServerPayload{
+		ServerType:  parsed.ServerType,
+		UpgradeDisk: *parsed.UpgradeDisk,
+	})
+}
+
+func validateUpdateFirewallsPayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindUpdateFirewalls); err != nil {
+		return "", err
+	}
+	var parsed UpdateFirewallsPayload
+	if err := json.Unmarshal(bytes.TrimSpace(defaultPayloadObject(payload)), &parsed); err != nil {
+		return "", fmt.Errorf("invalid update_firewalls payload: %w", err)
+	}
+	firewalls := make([]string, 0, len(parsed.Firewalls))
+	for _, firewall := range parsed.Firewalls {
+		firewall = strings.TrimSpace(firewall)
+		if firewall != "" {
+			firewalls = append(firewalls, firewall)
+		}
+	}
+	if len(firewalls) == 0 {
+		return "", fmt.Errorf("firewalls payload must contain at least one firewall")
+	}
+	return MarshalUpdateFirewallsPayload(UpdateFirewallsPayload{Firewalls: firewalls})
+}
+
+func validateManageVolumePayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindManageVolume); err != nil {
+		return "", err
+	}
+	var parsed ManageVolumePayload
+	if err := json.Unmarshal(bytes.TrimSpace(defaultPayloadObject(payload)), &parsed); err != nil {
+		return "", fmt.Errorf("invalid manage_volume payload: %w", err)
+	}
+	volumeName := strings.TrimSpace(parsed.VolumeName)
+	state := strings.TrimSpace(parsed.State)
+	if volumeName == "" {
+		return "", fmt.Errorf("volume_name is required for manage_volume job")
+	}
+	if state != "present" && state != "absent" {
+		return "", fmt.Errorf("state must be present or absent for manage_volume job")
+	}
+	if state == "present" {
+		if parsed.Automount == nil {
+			return "", fmt.Errorf("automount is required for manage_volume job when state=present")
+		}
+		if parsed.SizeGB <= 0 {
+			return "", fmt.Errorf("size_gb is required for manage_volume job when state=present")
+		}
+	}
+	return MarshalManageVolumePayload(parsed)
+}
+
+func validateRestartServicePayload(payload json.RawMessage, serverID int64) (string, error) {
+	if err := requireServerID(serverID, JobKindRestartService); err != nil {
+		return "", err
+	}
+	normalizedPayload, err := agentcommand.Validate(string(JobKindRestartService), bytes.TrimSpace(defaultPayloadObject(payload)))
+	if err != nil {
+		return "", fmt.Errorf("invalid restart_service payload: %w", err)
+	}
+	return string(normalizedPayload), nil
+}
+
+func defaultPayloadObject(payload json.RawMessage) []byte {
+	if normalizeArbitraryPayload(payload) == "" {
+		return []byte("{}")
+	}
+	return payload
 }
 
 // Job is the persisted orchestration unit.

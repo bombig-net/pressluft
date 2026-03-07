@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 
+	"pressluft/internal/platform"
 	"pressluft/internal/provider"
 	"pressluft/internal/server"
 )
@@ -40,15 +41,15 @@ func (a *ServerStoreAdapter) GetByID(ctx context.Context, id int64) (*StoredServ
 	}, nil
 }
 
-func (a *ServerStoreAdapter) UpdateStatus(ctx context.Context, id int64, status string) error {
+func (a *ServerStoreAdapter) UpdateStatus(ctx context.Context, id int64, status platform.ServerStatus) error {
 	return a.store.UpdateStatus(ctx, id, status)
 }
 
-func (a *ServerStoreAdapter) UpdateSetupState(ctx context.Context, id int64, setupState, setupLastError string) error {
+func (a *ServerStoreAdapter) UpdateSetupState(ctx context.Context, id int64, setupState platform.SetupState, setupLastError string) error {
 	return a.store.UpdateSetupState(ctx, id, setupState, setupLastError)
 }
 
-func (a *ServerStoreAdapter) UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error {
+func (a *ServerStoreAdapter) UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus string, status platform.ServerStatus, ipv4, ipv6 string) error {
 	return a.store.UpdateProvisioning(ctx, id, providerServerID, actionID, actionStatus, status, ipv4, ipv6)
 }
 

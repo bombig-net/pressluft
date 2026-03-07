@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"pressluft/internal/activity"
-	"pressluft/internal/agentcommand"
 	"pressluft/internal/orchestrator"
 )
 
@@ -25,36 +23,6 @@ type createJobRequest struct {
 	Kind     string          `json:"kind"`
 	ServerID int64           `json:"server_id"`
 	Payload  json.RawMessage `json:"payload"`
-}
-
-type rebuildServerRequest struct {
-	ServerName  string `json:"server_name"`
-	ServerImage string `json:"server_image"`
-}
-
-type deleteServerRequest struct {
-	ServerName string `json:"server_name"`
-}
-
-type resizeServerRequest struct {
-	ServerType  string `json:"server_type"`
-	UpgradeDisk *bool  `json:"upgrade_disk"`
-}
-
-type updateFirewallsRequest struct {
-	Firewalls []string `json:"firewalls"`
-}
-
-type manageVolumeRequest struct {
-	VolumeName string `json:"volume_name"`
-	SizeGB     int    `json:"size_gb"`
-	Location   string `json:"location"`
-	State      string `json:"state"`
-	Automount  *bool  `json:"automount"`
-}
-
-type restartServiceRequest struct {
-	ServiceName string `json:"service_name"`
 }
 
 func (jh *jobsHandler) route(w http.ResponseWriter, r *http.Request) {
@@ -210,150 +178,7 @@ func jobKindLabel(kind string) string {
 }
 
 func validateJobPayload(req createJobRequest) (string, error) {
-	payload := strings.TrimSpace(string(req.Payload))
-	payloadBytes := bytes.TrimSpace(req.Payload)
-	if len(payloadBytes) == 0 || string(payloadBytes) == "null" {
-		payloadBytes = []byte("{}")
-	}
-
-	if !orchestrator.IsKnownJobKind(req.Kind) {
-		return "", fmt.Errorf("unsupported job kind: %s", req.Kind)
-	}
-
-	switch req.Kind {
-	case string(orchestrator.JobKindProvisionServer):
-	case string(orchestrator.JobKindConfigureServer):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for configure_server job")
-		}
-		if payload == "" || payload == "null" {
-			return orchestrator.MarshalConfigureServerPayload(orchestrator.ConfigureServerPayload{})
-		}
-		var parsed struct {
-			IPv4 string `json:"ipv4"`
-		}
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid configure_server payload: %w", err)
-		}
-		return orchestrator.MarshalConfigureServerPayload(orchestrator.ConfigureServerPayload{
-			IPv4: parsed.IPv4,
-		})
-	case string(orchestrator.JobKindDeleteServer):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for delete_server job")
-		}
-		if payload == "" || payload == "null" {
-			return "", nil
-		}
-		var parsed deleteServerRequest
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid delete_server payload: %w", err)
-		}
-		return orchestrator.MarshalDeleteServerPayload()
-	case string(orchestrator.JobKindRebuildServer):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for rebuild_server job")
-		}
-		if payload == "" || payload == "null" {
-			return orchestrator.MarshalRebuildServerPayload(orchestrator.RebuildServerPayload{})
-		}
-		var parsed rebuildServerRequest
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid rebuild_server payload: %w", err)
-		}
-		return orchestrator.MarshalRebuildServerPayload(orchestrator.RebuildServerPayload{
-			ServerImage: parsed.ServerImage,
-		})
-	case string(orchestrator.JobKindResizeServer):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for resize_server job")
-		}
-		var parsed resizeServerRequest
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid resize_server payload: %w", err)
-		}
-		if strings.TrimSpace(parsed.ServerType) == "" {
-			return "", fmt.Errorf("server_type is required for resize_server job")
-		}
-		if parsed.UpgradeDisk == nil {
-			return "", fmt.Errorf("upgrade_disk is required for resize_server job")
-		}
-		return orchestrator.MarshalResizeServerPayload(orchestrator.ResizeServerPayload{
-			ServerType:  parsed.ServerType,
-			UpgradeDisk: *parsed.UpgradeDisk,
-		})
-	case string(orchestrator.JobKindUpdateFirewalls):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for update_firewalls job")
-		}
-		var parsed updateFirewallsRequest
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid update_firewalls payload: %w", err)
-		}
-		firewalls := make([]string, 0, len(parsed.Firewalls))
-		for _, fw := range parsed.Firewalls {
-			fw = strings.TrimSpace(fw)
-			if fw != "" {
-				firewalls = append(firewalls, fw)
-			}
-		}
-		if len(firewalls) == 0 {
-			return "", fmt.Errorf("firewalls payload must contain at least one firewall")
-		}
-		return orchestrator.MarshalUpdateFirewallsPayload(orchestrator.UpdateFirewallsPayload{
-			Firewalls: firewalls,
-		})
-	case string(orchestrator.JobKindManageVolume):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for manage_volume job")
-		}
-		var parsed manageVolumeRequest
-		if err := json.Unmarshal(payloadBytes, &parsed); err != nil {
-			return "", fmt.Errorf("invalid manage_volume payload: %w", err)
-		}
-		volumeName := strings.TrimSpace(parsed.VolumeName)
-		state := strings.TrimSpace(parsed.State)
-		if volumeName == "" {
-			return "", fmt.Errorf("volume_name is required for manage_volume job")
-		}
-		if state != "present" && state != "absent" {
-			return "", fmt.Errorf("state must be present or absent for manage_volume job")
-		}
-		if state == "present" {
-			if parsed.Automount == nil {
-				return "", fmt.Errorf("automount is required for manage_volume job when state=present")
-			}
-			if parsed.SizeGB <= 0 {
-				return "", fmt.Errorf("size_gb is required for manage_volume job when state=present")
-			}
-		}
-		return orchestrator.MarshalManageVolumePayload(orchestrator.ManageVolumePayload{
-			VolumeName: parsed.VolumeName,
-			SizeGB:     parsed.SizeGB,
-			Location:   parsed.Location,
-			State:      parsed.State,
-			Automount:  parsed.Automount,
-		})
-	case string(orchestrator.JobKindRestartService):
-		if req.ServerID <= 0 {
-			return "", fmt.Errorf("server_id is required for restart_service job")
-		}
-		normalizedPayload, err := agentcommand.Validate(req.Kind, payloadBytes)
-		if err != nil {
-			return "", fmt.Errorf("invalid restart_service payload: %w", err)
-		}
-		payload = string(normalizedPayload)
-	default:
-		if payload == "null" {
-			payload = ""
-		}
-		return payload, nil
-	}
-
-	if payload == "null" {
-		payload = ""
-	}
-	return payload, nil
+	return orchestrator.ValidatePayload(req.Kind, req.Payload, req.ServerID)
 }
 
 func (jh *jobsHandler) handleGet(w http.ResponseWriter, r *http.Request, jobID int64) {

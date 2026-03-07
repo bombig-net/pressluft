@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	format := flag.String("format", "ts", "output format: ts or json")
+	format := flag.String("format", "ts", "output format: ts, api-ts, or json")
 	flag.Parse()
 
 	var (
@@ -20,6 +20,10 @@ func main() {
 	switch *format {
 	case "json":
 		data, err = contract.JSON()
+	case "api-ts":
+		var rendered string
+		rendered, err = contract.RenderAPITypeScriptModule()
+		data = []byte(rendered)
 	case "ts":
 		var rendered string
 		rendered, err = contract.RenderTypeScriptModule()

@@ -98,6 +98,24 @@ func AllServerStatuses() []ServerStatus {
 	}
 }
 
+func NormalizeServerStatus(raw string) (ServerStatus, error) {
+	status := ServerStatus(strings.TrimSpace(raw))
+	switch status {
+	case ServerStatusPending,
+		ServerStatusProvisioning,
+		ServerStatusConfiguring,
+		ServerStatusRebuilding,
+		ServerStatusResizing,
+		ServerStatusDeleting,
+		ServerStatusDeleted,
+		ServerStatusReady,
+		ServerStatusFailed:
+		return status, nil
+	default:
+		return "", fmt.Errorf("unsupported server status %q", raw)
+	}
+}
+
 func InProgressServerStatuses() []ServerStatus {
 	return []ServerStatus{
 		ServerStatusPending,
@@ -133,12 +151,32 @@ func AllSetupStates() []SetupState {
 	}
 }
 
+func NormalizeSetupState(raw string) (SetupState, error) {
+	state := SetupState(strings.TrimSpace(raw))
+	switch state {
+	case SetupStateNotStarted, SetupStateRunning, SetupStateDegraded, SetupStateReady:
+		return state, nil
+	default:
+		return "", fmt.Errorf("unsupported setup state %q", raw)
+	}
+}
+
 func AllNodeStatuses() []NodeStatus {
 	return []NodeStatus{
 		NodeStatusOnline,
 		NodeStatusUnhealthy,
 		NodeStatusOffline,
 		NodeStatusUnknown,
+	}
+}
+
+func NormalizeNodeStatus(raw string) (NodeStatus, error) {
+	status := NodeStatus(strings.TrimSpace(raw))
+	switch status {
+	case NodeStatusOnline, NodeStatusUnhealthy, NodeStatusOffline, NodeStatusUnknown:
+		return status, nil
+	default:
+		return "", fmt.Errorf("unsupported node status %q", raw)
 	}
 }
 

@@ -99,8 +99,8 @@ func TestServersCreateEndpoint(t *testing.T) {
 	if len(servers) != 1 {
 		t.Fatalf("server count = %d, want %d", len(servers), 1)
 	}
-	if servers[0].Status != "pending" {
-		t.Fatalf("server status = %q, want %q", servers[0].Status, "pending")
+	if servers[0].Status != platform.ServerStatusPending {
+		t.Fatalf("server status = %q, want %q", servers[0].Status, platform.ServerStatusPending)
 	}
 }
 
@@ -188,7 +188,7 @@ func TestServersDeleteEndpointQueuesAsyncDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get server: %v", err)
 	}
-	if server.Status != string(platform.ServerStatusDeleting) {
+	if server.Status != platform.ServerStatusDeleting {
 		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusDeleting)
 	}
 
@@ -235,7 +235,7 @@ func TestAllAgentStatusIncludesStoredOfflineNodes(t *testing.T) {
 	providerID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
 	serverID := mustInsertServerRecord(t, db, providerID, string(platform.ServerStatusReady))
 	store := NewServerStore(db)
-	if err := store.UpdateNodeStatus(context.Background(), serverID, "offline", "2026-01-01T00:00:00Z", "1.0.0"); err != nil {
+	if err := store.UpdateNodeStatus(context.Background(), serverID, platform.NodeStatusOffline, "2026-01-01T00:00:00Z", "1.0.0"); err != nil {
 		t.Fatalf("update node status: %v", err)
 	}
 

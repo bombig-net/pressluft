@@ -24,7 +24,7 @@ type Handler struct {
 }
 
 type NodeStatusStore interface {
-	UpdateNodeStatus(ctx context.Context, serverID int64, status, lastSeen, version string) error
+	UpdateNodeStatus(ctx context.Context, serverID int64, status platform.NodeStatus, lastSeen, version string) error
 }
 
 func NewHandler(hub *Hub, completer Completer, waiter *ResultWaiter, store NodeStatusStore, logger *slog.Logger) *Handler {
@@ -40,12 +40,12 @@ func NewHandler(hub *Hub, completer Completer, waiter *ResultWaiter, store NodeS
 func (h *Handler) HandleConnection(ctx context.Context, conn *Conn) {
 	corr := observability.Correlation{ServerID: conn.ServerID()}
 	h.logger.Info("agent websocket session opened", corr.LogArgs("node_status", platform.NodeStatusOnline)...)
-	h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusOnline), conn.LastSeen(), conn.Version(), "connect")
+	h.persistNodeStatus(context.Background(), conn.ServerID(), platform.NodeStatusOnline, conn.LastSeen(), conn.Version(), "connect")
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			h.logger.Error("agent websocket session panicked", corr.LogArgs("panic", recovered)...)
 		}
-		h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusUnhealthy), conn.LastSeen(), conn.Version(), "disconnect")
+		h.persistNodeStatus(context.Background(), conn.ServerID(), platform.NodeStatusUnhealthy, conn.LastSeen(), conn.Version(), "disconnect")
 		h.hub.Unregister(conn.ServerID())
 		if err := conn.Close(); err != nil {
 			h.logger.Debug("agent websocket close failed", corr.LogArgs("error", err)...)
@@ -97,7 +97,7 @@ func (h *Handler) handleHeartbeat(ctx context.Context, conn *Conn, env Envelope)
 		return
 	}
 	ack.Payload = ackPayload
-	h.persistNodeStatus(context.Background(), conn.ServerID(), string(platform.NodeStatusOnline), conn.LastSeen(), conn.Version(), "heartbeat")
+	h.persistNodeStatus(context.Background(), conn.ServerID(), platform.NodeStatusOnline, conn.LastSeen(), conn.Version(), "heartbeat")
 	h.logger.Debug("agent heartbeat received", "server_id", conn.ServerID(), "node_status", platform.NodeStatusOnline, "version", conn.Version())
 
 	_ = conn.Send(ctx, ack)
@@ -147,7 +147,7 @@ func (h *Handler) handleLogEntry(ctx context.Context, conn *Conn, env Envelope) 
 	}
 }
 
-func (h *Handler) persistNodeStatus(ctx context.Context, serverID int64, status string, lastSeen time.Time, version string, reason string) {
+func (h *Handler) persistNodeStatus(ctx context.Context, serverID int64, status platform.NodeStatus, lastSeen time.Time, version string, reason string) {
 	if h.store == nil {
 		return
 	}

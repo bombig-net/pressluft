@@ -46,6 +46,7 @@ type JobKindSpec struct {
 	AllowedStatuses []string `json:"allowed_statuses"`
 	Destructive     bool     `json:"destructive"`
 	Experimental    bool     `json:"experimental"`
+	ExecutionPath   string   `json:"execution_path"`
 	TimeoutSeconds  int64    `json:"timeout_seconds"`
 	RetryLimit      int      `json:"retry_limit"`
 	Recovery        string   `json:"recovery"`
@@ -147,6 +148,7 @@ func jobKindSpecs() []JobKindSpec {
 			AllowedStatuses: toStrings(spec.AllowedStatuses),
 			Destructive:     spec.Destructive,
 			Experimental:    spec.Experimental,
+			ExecutionPath:   spec.ExecutionPath,
 			TimeoutSeconds:  int64(spec.Timeout / time.Second),
 			RetryLimit:      spec.RetryLimit,
 			Recovery:        spec.Recovery,

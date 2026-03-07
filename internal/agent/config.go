@@ -55,6 +55,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.path = path
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }
@@ -140,6 +143,34 @@ func (c *Config) CertificateState(now time.Time) ClientCertificateState {
 
 func (c *Config) ConfigPath() string {
 	return c.path
+}
+
+func (c *Config) Validate() error {
+	if c.ServerID <= 0 {
+		return fmt.Errorf("server_id is required")
+	}
+	if strings.TrimSpace(c.ControlPlane) == "" {
+		return fmt.Errorf("control_plane is required")
+	}
+	if strings.TrimSpace(c.CertFile) == "" {
+		return fmt.Errorf("cert_file is required")
+	}
+	if strings.TrimSpace(c.KeyFile) == "" {
+		return fmt.Errorf("key_file is required")
+	}
+	if strings.TrimSpace(c.CACertFile) == "" {
+		return fmt.Errorf("ca_cert_file is required")
+	}
+	if strings.TrimSpace(c.DataDir) == "" {
+		return fmt.Errorf("data_dir is required")
+	}
+	if strings.TrimSpace(c.RegistrationToken) != "" && strings.TrimSpace(c.RegistrationTokenFile) != "" {
+		return fmt.Errorf("registration_token and registration_token_file are mutually exclusive")
+	}
+	if strings.TrimSpace(c.DevWSToken) != "" && strings.TrimSpace(c.DevWSTokenFile) != "" {
+		return fmt.Errorf("dev_ws_token and dev_ws_token_file are mutually exclusive")
+	}
+	return nil
 }
 
 func (c *Config) resolveConfigPath(path string) (string, error) {

@@ -20,28 +20,28 @@ var (
 
 // StoredServer is a persisted server node record.
 type StoredServer struct {
-	ID               int64  `json:"id"`
-	ProviderID       int64  `json:"provider_id"`
-	ProviderType     string `json:"provider_type"`
-	ProviderServerID string `json:"provider_server_id,omitempty"`
-	IPv4             string `json:"ipv4,omitempty"`
-	IPv6             string `json:"ipv6,omitempty"`
-	Name             string `json:"name"`
-	Location         string `json:"location"`
-	ServerType       string `json:"server_type"`
-	Image            string `json:"image"`
-	ProfileKey       string `json:"profile_key"`
-	Status           string `json:"status"`
-	SetupState       string `json:"setup_state"`
-	SetupLastError   string `json:"setup_last_error,omitempty"`
-	ActionID         string `json:"action_id,omitempty"`
-	ActionStatus     string `json:"action_status,omitempty"`
-	HasKey           bool   `json:"has_key"`
-	NodeStatus       string `json:"node_status,omitempty"`
-	NodeLastSeen     string `json:"node_last_seen,omitempty"`
-	NodeVersion      string `json:"node_version,omitempty"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	ID               int64                 `json:"id"`
+	ProviderID       int64                 `json:"provider_id"`
+	ProviderType     string                `json:"provider_type"`
+	ProviderServerID string                `json:"provider_server_id,omitempty"`
+	IPv4             string                `json:"ipv4,omitempty"`
+	IPv6             string                `json:"ipv6,omitempty"`
+	Name             string                `json:"name"`
+	Location         string                `json:"location"`
+	ServerType       string                `json:"server_type"`
+	Image            string                `json:"image"`
+	ProfileKey       string                `json:"profile_key"`
+	Status           platform.ServerStatus `json:"status"`
+	SetupState       platform.SetupState   `json:"setup_state"`
+	SetupLastError   string                `json:"setup_last_error,omitempty"`
+	ActionID         string                `json:"action_id,omitempty"`
+	ActionStatus     string                `json:"action_status,omitempty"`
+	HasKey           bool                  `json:"has_key"`
+	NodeStatus       platform.NodeStatus   `json:"node_status,omitempty"`
+	NodeLastSeen     string                `json:"node_last_seen,omitempty"`
+	NodeVersion      string                `json:"node_version,omitempty"`
+	CreatedAt        string                `json:"created_at"`
+	UpdatedAt        string                `json:"updated_at"`
 }
 
 // CreateServerNodeInput is required to create a server record.
@@ -53,7 +53,7 @@ type CreateServerNodeInput struct {
 	ServerType   string
 	Image        string
 	ProfileKey   string
-	Status       string
+	Status       platform.ServerStatus
 }
 
 // ServerStore provides persistence for server records.
@@ -121,6 +121,8 @@ func (s *ServerStore) List(ctx context.Context) ([]StoredServer, error) {
 	for rows.Next() {
 		var (
 			srv              StoredServer
+			status           string
+			setupState       string
 			providerServerID sql.NullString
 			ipv4             sql.NullString
 			ipv6             sql.NullString
@@ -144,8 +146,8 @@ func (s *ServerStore) List(ctx context.Context) ([]StoredServer, error) {
 			&srv.ServerType,
 			&srv.Image,
 			&srv.ProfileKey,
-			&srv.Status,
-			&srv.SetupState,
+			&status,
+			&setupState,
 			&setupLastError,
 			&actionID,
 			&actionStatus,
@@ -164,7 +166,20 @@ func (s *ServerStore) List(ctx context.Context) ([]StoredServer, error) {
 		srv.ActionID = nullStringValue(actionID)
 		srv.ActionStatus = nullStringValue(actionStatus)
 		srv.SetupLastError = nullStringValue(setupLastError)
-		srv.NodeStatus = nullStringValue(nodeStatus)
+		normalizedStatus, err := platform.NormalizeServerStatus(status)
+		if err != nil {
+			return nil, fmt.Errorf("scan server status: %w", err)
+		}
+		srv.Status = normalizedStatus
+		normalizedSetupState, err := platform.NormalizeSetupState(setupState)
+		if err != nil {
+			return nil, fmt.Errorf("scan setup state: %w", err)
+		}
+		srv.SetupState = normalizedSetupState
+		srv.NodeStatus, err = normalizeStoredNodeStatus(nodeStatus)
+		if err != nil {
+			return nil, fmt.Errorf("scan node status: %w", err)
+		}
 		srv.NodeLastSeen = nullStringValue(nodeLastSeen)
 		srv.NodeVersion = nullStringValue(nodeVersion)
 		srv.HasKey = hasKey != 0
@@ -178,12 +193,12 @@ func (s *ServerStore) List(ctx context.Context) ([]StoredServer, error) {
 	return out, nil
 }
 
-func (s *ServerStore) UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error {
+func (s *ServerStore) UpdateProvisioning(ctx context.Context, id int64, providerServerID, actionID, actionStatus string, status platform.ServerStatus, ipv4, ipv6 string) error {
 	if id <= 0 {
 		return fmt.Errorf("id must be greater than zero")
 	}
-	if strings.TrimSpace(status) == "" {
-		return fmt.Errorf("status is required")
+	if _, err := platform.NormalizeServerStatus(string(status)); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -194,7 +209,7 @@ func (s *ServerStore) UpdateProvisioning(ctx context.Context, id int64, provider
 		providerServerID,
 		actionID,
 		actionStatus,
-		status,
+		string(status),
 		ipv4,
 		ipv6,
 		now,
@@ -234,8 +249,8 @@ func validateCreateServerNodeInput(in CreateServerNodeInput) error {
 	if strings.TrimSpace(in.ProfileKey) == "" {
 		return fmt.Errorf("profile_key is required")
 	}
-	if strings.TrimSpace(in.Status) == "" {
-		return fmt.Errorf("status is required")
+	if _, err := platform.NormalizeServerStatus(string(in.Status)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -248,6 +263,8 @@ func (s *ServerStore) GetByID(ctx context.Context, id int64) (*StoredServer, err
 
 	var (
 		srv              StoredServer
+		status           string
+		setupState       string
 		providerServerID sql.NullString
 		ipv4             sql.NullString
 		ipv6             sql.NullString
@@ -278,8 +295,8 @@ func (s *ServerStore) GetByID(ctx context.Context, id int64) (*StoredServer, err
 		&srv.ServerType,
 		&srv.Image,
 		&srv.ProfileKey,
-		&srv.Status,
-		&srv.SetupState,
+		&status,
+		&setupState,
 		&setupLastError,
 		&actionID,
 		&actionStatus,
@@ -303,7 +320,18 @@ func (s *ServerStore) GetByID(ctx context.Context, id int64) (*StoredServer, err
 	srv.ActionID = nullStringValue(actionID)
 	srv.ActionStatus = nullStringValue(actionStatus)
 	srv.SetupLastError = nullStringValue(setupLastError)
-	srv.NodeStatus = nullStringValue(nodeStatus)
+	srv.Status, err = platform.NormalizeServerStatus(status)
+	if err != nil {
+		return nil, fmt.Errorf("get server status: %w", err)
+	}
+	srv.SetupState, err = platform.NormalizeSetupState(setupState)
+	if err != nil {
+		return nil, fmt.Errorf("get setup state: %w", err)
+	}
+	srv.NodeStatus, err = normalizeStoredNodeStatus(nodeStatus)
+	if err != nil {
+		return nil, fmt.Errorf("get node status: %w", err)
+	}
 	srv.NodeLastSeen = nullStringValue(nodeLastSeen)
 	srv.NodeVersion = nullStringValue(nodeVersion)
 	srv.HasKey = hasKey != 0
@@ -312,18 +340,18 @@ func (s *ServerStore) GetByID(ctx context.Context, id int64) (*StoredServer, err
 }
 
 // UpdateStatus updates only the status field of a server.
-func (s *ServerStore) UpdateStatus(ctx context.Context, id int64, status string) error {
+func (s *ServerStore) UpdateStatus(ctx context.Context, id int64, status platform.ServerStatus) error {
 	if id <= 0 {
 		return fmt.Errorf("id must be greater than zero")
 	}
-	if strings.TrimSpace(status) == "" {
-		return fmt.Errorf("status is required")
+	if _, err := platform.NormalizeServerStatus(string(status)); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET status = ?, updated_at = ? WHERE id = ?`,
-		status,
+		string(status),
 		now,
 		id,
 	)
@@ -339,18 +367,18 @@ func (s *ServerStore) UpdateStatus(ctx context.Context, id int64, status string)
 	return nil
 }
 
-func (s *ServerStore) UpdateSetupState(ctx context.Context, id int64, setupState, setupLastError string) error {
+func (s *ServerStore) UpdateSetupState(ctx context.Context, id int64, setupState platform.SetupState, setupLastError string) error {
 	if id <= 0 {
 		return fmt.Errorf("id must be greater than zero")
 	}
-	if strings.TrimSpace(setupState) == "" {
-		return fmt.Errorf("setup_state is required")
+	if _, err := platform.NormalizeSetupState(string(setupState)); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET setup_state = ?, setup_last_error = ?, updated_at = ? WHERE id = ?`,
-		setupState,
+		string(setupState),
 		nullableServerString(setupLastError),
 		now,
 		id,
@@ -437,16 +465,20 @@ func (s *ServerStore) QueueServerJob(ctx context.Context, in QueueServerJobInput
 	}
 	defer tx.Rollback()
 
-	var serverStatus string
-	if err := tx.QueryRowContext(ctx, `SELECT status FROM servers WHERE id = ?`, in.ServerID).Scan(&serverStatus); err != nil {
+	var serverStatusRaw string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM servers WHERE id = ?`, in.ServerID).Scan(&serverStatusRaw); err != nil {
 		if err == sql.ErrNoRows {
 			return StoredServer{}, orchestrator.Job{}, fmt.Errorf("server %d not found", in.ServerID)
 		}
 		return StoredServer{}, orchestrator.Job{}, fmt.Errorf("read server status: %w", err)
 	}
 
-	if platform.IsDeletingOrDeletedServerStatus(serverStatus) {
-		if serverStatus == string(platform.ServerStatusDeleting) {
+	serverStatus, err := platform.NormalizeServerStatus(serverStatusRaw)
+	if err != nil {
+		return StoredServer{}, orchestrator.Job{}, fmt.Errorf("normalize server status: %w", err)
+	}
+	if platform.IsDeletingOrDeletedServerStatus(string(serverStatus)) {
+		if serverStatus == platform.ServerStatusDeleting {
 			return StoredServer{}, orchestrator.Job{}, ErrServerDeleting
 		}
 		return StoredServer{}, orchestrator.Job{}, ErrServerDeleted
@@ -528,13 +560,12 @@ func (s *ServerStore) QueueServerJob(ctx context.Context, in QueueServerJobInput
 }
 
 // UpdateNodeStatus updates the node_status, node_last_seen, and node_version fields.
-func (s *ServerStore) UpdateNodeStatus(ctx context.Context, id int64, status, lastSeen, version string) error {
+func (s *ServerStore) UpdateNodeStatus(ctx context.Context, id int64, status platform.NodeStatus, lastSeen, version string) error {
 	if id <= 0 {
 		return fmt.Errorf("id must be greater than zero")
 	}
-	status = strings.TrimSpace(status)
-	if status != "" && status != "online" && status != "unhealthy" && status != "offline" && status != "unknown" {
-		return fmt.Errorf("invalid node status: %s", status)
+	if _, err := platform.NormalizeNodeStatus(string(status)); err != nil {
+		return err
 	}
 	lastSeen = strings.TrimSpace(lastSeen)
 	if lastSeen != "" {
@@ -547,7 +578,7 @@ func (s *ServerStore) UpdateNodeStatus(ctx context.Context, id int64, status, la
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET node_status = ?, node_last_seen = ?, node_version = ?, updated_at = ? WHERE id = ?`,
-		status,
+		string(status),
 		lastSeen,
 		version,
 		now,
@@ -570,12 +601,15 @@ func (s *ServerStore) MarkNodesOfflineBefore(ctx context.Context, cutoff time.Ti
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE servers
-		 SET node_status = 'offline', updated_at = ?
-		 WHERE node_status IN ('online', 'unhealthy')
+		 SET node_status = ?, updated_at = ?
+		 WHERE node_status IN (?, ?)
 		   AND node_last_seen IS NOT NULL
 		   AND node_last_seen != ''
 		   AND node_last_seen < ?`,
+		string(platform.NodeStatusOffline),
 		now,
+		string(platform.NodeStatusOnline),
+		string(platform.NodeStatusUnhealthy),
 		cutoffText,
 	)
 	if err != nil {
@@ -601,4 +635,11 @@ func nullableServerString(v string) any {
 		return nil
 	}
 	return v
+}
+
+func normalizeStoredNodeStatus(value sql.NullString) (platform.NodeStatus, error) {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return platform.NodeStatusUnknown, nil
+	}
+	return platform.NormalizeNodeStatus(value.String)
 }

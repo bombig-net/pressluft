@@ -23,7 +23,7 @@ func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
 	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
-		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: string(platform.ServerStatusDeleting)},
+		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: platform.ServerStatusDeleting},
 	}}
 	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
@@ -36,7 +36,7 @@ func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 		t.Fatalf("execute delete: %v", err)
 	}
 
-	if got := serverStore.servers[1].Status; got != string(platform.ServerStatusDeleted) {
+	if got := serverStore.servers[1].Status; got != platform.ServerStatusDeleted {
 		t.Fatalf("server status = %q, want %q", got, platform.ServerStatusDeleted)
 	}
 	storedJob := mustGetExecutorJob(t, jobStore, job.ID)
@@ -49,7 +49,7 @@ func TestExecutorDeleteServerFailureLeavesRecoverableStatus(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
 	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
-		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: string(platform.ServerStatusDeleting)},
+		1: {ID: 1, ProviderID: 11, Name: "delete-me", Status: platform.ServerStatusDeleting},
 	}}
 	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"delete.yml": errors.New("provider delete failed")}}
@@ -63,7 +63,7 @@ func TestExecutorDeleteServerFailureLeavesRecoverableStatus(t *testing.T) {
 		t.Fatal("expected delete to fail")
 	}
 
-	if got := serverStore.servers[1].Status; got != string(platform.ServerStatusFailed) {
+	if got := serverStore.servers[1].Status; got != platform.ServerStatusFailed {
 		t.Fatalf("server status = %q, want %q", got, platform.ServerStatusFailed)
 	}
 	storedJob := mustGetExecutorJob(t, jobStore, job.ID)
@@ -77,7 +77,7 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	logger := testLogger()
 	serverStore := &fakeServerStore{
 		servers: map[int64]*StoredServer{
-			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "nginx-stack", Image: "ubuntu-22.04", IPv4: "203.0.113.10", Status: string(platform.ServerStatusRebuilding)},
+			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "nginx-stack", Image: "ubuntu-22.04", IPv4: "203.0.113.10", Status: platform.ServerStatusRebuilding},
 		},
 	}
 	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
@@ -98,10 +98,10 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	}
 
 	server := serverStore.servers[1]
-	if server.Status != string(platform.ServerStatusConfiguring) {
+	if server.Status != platform.ServerStatusConfiguring {
 		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusConfiguring)
 	}
-	if server.SetupState != string(platform.SetupStateRunning) {
+	if server.SetupState != platform.SetupStateRunning {
 		t.Fatalf("setup state = %q, want %q", server.SetupState, platform.SetupStateRunning)
 	}
 	if server.Image != "ubuntu-24.04" {
@@ -140,7 +140,7 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 
 	serverStore := &fakeServerStore{
 		servers: map[int64]*StoredServer{
-			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "openlitespeed-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: string(platform.ServerStatusRebuilding)},
+			1: {ID: 1, ProviderID: 11, Name: "rebuild-me", ProfileKey: "openlitespeed-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: platform.ServerStatusRebuilding},
 		},
 		keys: map[int64]*StoredServerKey{
 			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
@@ -165,7 +165,7 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rebuild to fail")
 	}
-	if got := serverStore.servers[1].Status; got != string(platform.ServerStatusFailed) {
+	if got := serverStore.servers[1].Status; got != platform.ServerStatusFailed {
 		t.Fatalf("server status = %q, want %q", got, platform.ServerStatusFailed)
 	}
 	if len(runner.requests) != 0 {
@@ -177,7 +177,7 @@ func TestExecutorResizeServerFailureMarksFailed(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
 	serverStore := &fakeServerStore{servers: map[int64]*StoredServer{
-		1: {ID: 1, ProviderID: 11, Name: "resize-me", ServerType: "cx22", Status: string(platform.ServerStatusResizing)},
+		1: {ID: 1, ProviderID: 11, Name: "resize-me", ServerType: "cx22", Status: platform.ServerStatusResizing},
 	}}
 	providerStore := &fakeProviderStore{provider: &StoredProvider{ID: 11, Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"resize.yml": errors.New("provider resize failed")}}
@@ -195,7 +195,7 @@ func TestExecutorResizeServerFailureMarksFailed(t *testing.T) {
 		t.Fatal("expected resize to fail")
 	}
 
-	if got := serverStore.servers[1].Status; got != string(platform.ServerStatusFailed) {
+	if got := serverStore.servers[1].Status; got != platform.ServerStatusFailed {
 		t.Fatalf("server status = %q, want %q", got, platform.ServerStatusFailed)
 	}
 	if got := serverStore.servers[1].ServerType; got != "cx22" {
@@ -221,7 +221,7 @@ func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
 
 	serverStore := &fakeServerStore{
 		servers: map[int64]*StoredServer{
-			1: {ID: 1, ProviderID: 11, Name: "setup-me", ProfileKey: "nginx-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: string(platform.ServerStatusConfiguring), SetupState: string(platform.SetupStateRunning)},
+			1: {ID: 1, ProviderID: 11, Name: "setup-me", ProfileKey: "nginx-stack", Image: "ubuntu-24.04", IPv4: "203.0.113.10", Status: platform.ServerStatusConfiguring, SetupState: platform.SetupStateRunning},
 		},
 		keys: map[int64]*StoredServerKey{
 			1: {ServerID: 1, PrivateKeyEncrypted: encrypted, EncryptionKeyID: keyID, PublicKey: "ssh-ed25519 AAAATEST"},
@@ -247,10 +247,10 @@ func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
 	}
 
 	server := serverStore.servers[1]
-	if server.Status != string(platform.ServerStatusConfiguring) {
+	if server.Status != platform.ServerStatusConfiguring {
 		t.Fatalf("server status = %q, want %q", server.Status, platform.ServerStatusConfiguring)
 	}
-	if server.SetupState != string(platform.SetupStateDegraded) {
+	if server.SetupState != platform.SetupStateDegraded {
 		t.Fatalf("setup state = %q, want %q", server.SetupState, platform.SetupStateDegraded)
 	}
 	if server.SetupLastError == "" {
@@ -272,18 +272,18 @@ func (s *fakeServerStore) GetByID(_ context.Context, id int64) (*StoredServer, e
 	return &copy, nil
 }
 
-func (s *fakeServerStore) UpdateStatus(_ context.Context, id int64, status string) error {
+func (s *fakeServerStore) UpdateStatus(_ context.Context, id int64, status platform.ServerStatus) error {
 	s.servers[id].Status = status
 	return nil
 }
 
-func (s *fakeServerStore) UpdateSetupState(_ context.Context, id int64, setupState, setupLastError string) error {
+func (s *fakeServerStore) UpdateSetupState(_ context.Context, id int64, setupState platform.SetupState, setupLastError string) error {
 	s.servers[id].SetupState = setupState
 	s.servers[id].SetupLastError = setupLastError
 	return nil
 }
 
-func (s *fakeServerStore) UpdateProvisioning(_ context.Context, id int64, providerServerID, actionID, actionStatus, status, ipv4, ipv6 string) error {
+func (s *fakeServerStore) UpdateProvisioning(_ context.Context, id int64, providerServerID, actionID, actionStatus string, status platform.ServerStatus, ipv4, ipv6 string) error {
 	server := s.servers[id]
 	server.ProviderServerID = providerServerID
 	server.Status = status

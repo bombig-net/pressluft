@@ -10,7 +10,7 @@ import (
 )
 
 type ServerStore interface {
-	UpdateNodeStatus(ctx context.Context, serverID int64, status, lastSeen, version string) error
+	UpdateNodeStatus(ctx context.Context, serverID int64, status platform.NodeStatus, lastSeen, version string) error
 	MarkNodesOfflineBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
@@ -57,14 +57,14 @@ func (m *Monitor) checkConnections() {
 		if elapsed > m.offlineThreshold {
 			m.logger.Info("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", platform.NodeStatusOffline, "reason", "heartbeat_timeout", "elapsed", elapsed)...)
 			if m.store != nil {
-				_ = m.store.UpdateNodeStatus(context.Background(), serverID, string(platform.NodeStatusOffline), lastSeen.UTC().Format(time.RFC3339), version)
+				_ = m.store.UpdateNodeStatus(context.Background(), serverID, platform.NodeStatusOffline, lastSeen.UTC().Format(time.RFC3339), version)
 			}
 			conn.Close()
 			m.hub.Unregister(serverID)
 		} else if elapsed > m.unhealthyThreshold {
 			m.logger.Debug("node health transitioned", observability.Correlation{ServerID: serverID}.LogArgs("node_status", platform.NodeStatusUnhealthy, "reason", "heartbeat_degraded", "elapsed", elapsed)...)
 			if m.store != nil {
-				_ = m.store.UpdateNodeStatus(context.Background(), serverID, string(platform.NodeStatusUnhealthy), lastSeen.UTC().Format(time.RFC3339), version)
+				_ = m.store.UpdateNodeStatus(context.Background(), serverID, platform.NodeStatusUnhealthy, lastSeen.UTC().Format(time.RFC3339), version)
 			}
 		}
 

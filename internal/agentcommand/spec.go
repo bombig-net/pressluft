@@ -7,12 +7,10 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"pressluft/internal/orchestrator"
 )
 
 const (
-	TypeRestartService = string(orchestrator.JobKindRestartService)
+	TypeRestartService = "restart_service"
 	TypeListServices   = "list_services"
 
 	ErrorCodeUnknownCommand      = "unknown_command"

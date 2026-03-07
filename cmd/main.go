@@ -40,6 +40,16 @@ import (
 
 const defaultAddr = ":8080"
 
+type playbookPaths struct {
+	provision string
+	configure string
+	delete    string
+	rebuild   string
+	resize    string
+	firewalls string
+	volume    string
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -116,13 +126,7 @@ func main() {
 	if err := logAnsibleVersion(ansibleBinary, runtimeConfig.AnsibleDir, logger); err != nil {
 		log.Fatalf("ansible preflight failed: %v", err)
 	}
-	playbookPath := "ops/ansible/playbooks/provision.yml"
-	configurePlaybookPath := "ops/ansible/playbooks/configure.yml"
-	deletePlaybookPath := "ops/ansible/playbooks/delete_server.yml"
-	rebuildPlaybookPath := "ops/ansible/playbooks/rebuild_server.yml"
-	resizePlaybookPath := "ops/ansible/playbooks/resize_server.yml"
-	firewallsPlaybookPath := "ops/ansible/playbooks/update_firewalls.yml"
-	volumePlaybookPath := "ops/ansible/playbooks/manage_volume.yml"
+	playbooks := defaultPlaybookPaths()
 
 	controlPlaneURL := runtimeConfig.ControlPlaneURL
 	if executionMode == platform.ExecutionModeDev && platform.DetectCallbackURLMode(controlPlaneURL) == platform.CallbackURLModeEphemeral {
@@ -136,13 +140,13 @@ func main() {
 	}
 
 	ansibleRunner := ansible.NewAdapter(ansibleBinary, runtimeConfig.AnsibleDir, []string{
-		playbookPath,
-		configurePlaybookPath,
-		deletePlaybookPath,
-		rebuildPlaybookPath,
-		resizePlaybookPath,
-		firewallsPlaybookPath,
-		volumePlaybookPath,
+		playbooks.provision,
+		playbooks.configure,
+		playbooks.delete,
+		playbooks.rebuild,
+		playbooks.resize,
+		playbooks.firewalls,
+		playbooks.volume,
 	})
 
 	hub := ws.NewHub()
@@ -156,13 +160,13 @@ func main() {
 		activityStore,
 		ansibleRunner,
 		worker.ExecutorConfig{
-			ProvisionPlaybookPath: playbookPath,
-			ConfigurePlaybookPath: configurePlaybookPath,
-			DeletePlaybookPath:    deletePlaybookPath,
-			RebuildPlaybookPath:   rebuildPlaybookPath,
-			ResizePlaybookPath:    resizePlaybookPath,
-			FirewallsPlaybookPath: firewallsPlaybookPath,
-			VolumePlaybookPath:    volumePlaybookPath,
+			ProvisionPlaybookPath: playbooks.provision,
+			ConfigurePlaybookPath: playbooks.configure,
+			DeletePlaybookPath:    playbooks.delete,
+			RebuildPlaybookPath:   playbooks.rebuild,
+			ResizePlaybookPath:    playbooks.resize,
+			FirewallsPlaybookPath: playbooks.firewalls,
+			VolumePlaybookPath:    playbooks.volume,
 			ControlPlaneURL:       controlPlaneURL,
 			ExecutionMode:         executionMode,
 			DevTokenStore:         agentTokenStore,
@@ -190,12 +194,7 @@ func main() {
 	monitor := ws.NewMonitor(hub, serverStore, logger)
 	go monitor.Start(ctx)
 
-	var operatorAuthenticator auth.Authenticator
-	if executionMode == platform.ExecutionModeDev {
-		operatorAuthenticator = auth.NewDevAuthenticator()
-	} else {
-		operatorAuthenticator = auth.NewSessionAuthenticator(authService)
-	}
+	operatorAuthenticator := operatorAuthenticatorForMode(executionMode, authService)
 
 	httpServer := &http.Server{
 		Addr:              resolveAddr(),
@@ -210,17 +209,7 @@ func main() {
 		return httpServer.ListenAndServe()
 	}
 	if executionMode == platform.ExecutionModeProductionBootstrap {
-		if err := resolveProductionTLSConfig(controlPlaneURL, runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile); err != nil {
-			log.Fatalf("resolve production TLS config: %v", err)
-		}
-		httpServer.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			ClientAuth: tls.VerifyClientCertIfGiven,
-			ClientCAs:  ca.CertPool(),
-		}
-		listenAndServe = func() error {
-			return httpServer.ListenAndServeTLS(runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile)
-		}
+		listenAndServe = configureProductionTLSServer(httpServer, ca, controlPlaneURL, runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile)
 	}
 
 	// Handle shutdown signals
@@ -246,6 +235,25 @@ func main() {
 	}
 
 	logger.Info("pressluft stopped")
+}
+
+func defaultPlaybookPaths() playbookPaths {
+	return playbookPaths{
+		provision: "ops/ansible/playbooks/provision.yml",
+		configure: "ops/ansible/playbooks/configure.yml",
+		delete:    "ops/ansible/playbooks/delete_server.yml",
+		rebuild:   "ops/ansible/playbooks/rebuild_server.yml",
+		resize:    "ops/ansible/playbooks/resize_server.yml",
+		firewalls: "ops/ansible/playbooks/update_firewalls.yml",
+		volume:    "ops/ansible/playbooks/manage_volume.yml",
+	}
+}
+
+func operatorAuthenticatorForMode(mode platform.ExecutionMode, authService *auth.Service) auth.Authenticator {
+	if mode == platform.ExecutionModeDev {
+		return auth.NewDevAuthenticator()
+	}
+	return auth.NewSessionAuthenticator(authService)
 }
 
 func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
@@ -317,6 +325,20 @@ func logAnsibleVersion(binaryPath, workingDir string, logger *slog.Logger) error
 	}
 	logger.Info("ansible preflight", "binary", binaryPath, "version", strings.TrimSpace(string(output)))
 	return nil
+}
+
+func configureProductionTLSServer(httpServer *http.Server, ca *pki.CA, controlPlaneURL, tlsCertFile, tlsKeyFile string) func() error {
+	if err := resolveProductionTLSConfig(controlPlaneURL, tlsCertFile, tlsKeyFile); err != nil {
+		log.Fatalf("resolve production TLS config: %v", err)
+	}
+	httpServer.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  ca.CertPool(),
+	}
+	return func() error {
+		return httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+	}
 }
 
 func resolveProductionTLSConfig(controlPlaneURL, tlsCertFile, tlsKeyFile string) error {
