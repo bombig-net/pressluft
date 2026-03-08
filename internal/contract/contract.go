@@ -75,7 +75,6 @@ func SpecData() Spec {
 	configScopes := map[string][]EnvVarDoc{
 		"control-plane": toEnvDocs(envconfig.ControlPlaneEnvSpec()),
 		"agent":         toEnvDocs(envconfig.AgentEnvSpec()),
-		"smoke":         toEnvDocs(envconfig.SmokeEnvSpec()),
 	}
 
 	return Spec{

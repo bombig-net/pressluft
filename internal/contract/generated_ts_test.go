@@ -25,6 +25,6 @@ func TestGeneratedTypeScriptContractIsFresh(t *testing.T) {
 	}
 
 	if string(current) != rendered {
-		t.Fatalf("generated contract is stale; run `make generate-contract`")
+		t.Fatalf("generated contract is stale; run `make generate-contract` or `go run ./cmd/pressluft-contractgen -format ts > web/app/lib/platform-contract.generated.ts`")
 	}
 }

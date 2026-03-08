@@ -31,8 +31,10 @@ import {
   mutationBlockedServerStatuses,
   type CallbackURLMode,
   type ServerStatus,
+  type SupportLevel,
   type SetupState,
 } from "~/lib/platform-contract.generated"
+import type { ServerProfile } from "~/lib/api-contract"
 
 const modal = useModal()
 
@@ -86,11 +88,8 @@ const locationOptions = computed(() =>
   })),
 )
 
-const profileOptions = computed(() =>
-  profiles.value.map((profile) => ({
-    value: profile.key,
-    label: profile.name,
-  })),
+const selectableProfiles = computed(() =>
+  profiles.value.filter((profile) => profile.support_level !== "unavailable"),
 )
 
 // Filter server types to only show those available at the selected location
@@ -119,9 +118,17 @@ const selectedProfile = computed(() =>
   profiles.value.find((profile) => profile.key === formProfileKey.value),
 )
 
+const defaultProfileKey = computed(() =>
+  selectableProfiles.value[0]?.key || "",
+)
+
 const selectedTypeLabel = computed(() =>
   serverTypeOptions.value.find((option) => option.value === formServerType.value)?.label
   || formServerType.value,
+)
+
+const selectedProfileStatusClass = computed(() =>
+  selectedProfile.value ? profileSupportClass(selectedProfile.value.support_level) : "border-border/60 bg-muted/40 text-muted-foreground"
 )
 
 const controlClass =
@@ -167,7 +174,7 @@ const resetForm = () => {
   formName.value = ""
   formLocation.value = ""
   formServerType.value = ""
-  formProfileKey.value = profileOptions.value[0]?.value || ""
+  formProfileKey.value = defaultProfileKey.value
   activeJobId.value = null
 }
 
@@ -190,7 +197,7 @@ const loadCatalogForSelectedProvider = async () => {
     formLocation.value = locationOptions.value[0]?.value || ""
     // Server type will be set after location is selected (filtered by availability)
     formServerType.value = ""
-    formProfileKey.value = profileOptions.value[0]?.value || ""
+    formProfileKey.value = defaultProfileKey.value
   } catch (e: any) {
     formError.value = e.message
   } finally {
@@ -274,7 +281,35 @@ const isFormValid = () => {
     && !!formLocation.value
     && !!formServerType.value
     && !!formProfileKey.value
+    && selectedProfile.value?.support_level !== "unavailable"
   )
+}
+
+const supportLevelLabel = (supportLevel: SupportLevel): string => {
+  if (supportLevel === "supported") return "Supported"
+  if (supportLevel === "experimental") return "Experimental"
+  return "Not Ready"
+}
+
+const profileSupportClass = (supportLevel: SupportLevel): string => {
+  if (supportLevel === "supported") return "border-primary/30 bg-primary/10 text-primary"
+  if (supportLevel === "experimental") return "border-accent/30 bg-accent/10 text-accent"
+  return "border-border/60 bg-muted/60 text-muted-foreground"
+}
+
+const profileCardClass = (profile: ServerProfile): string => {
+  if (profile.key === formProfileKey.value) {
+    if (profile.support_level === "supported") return "border-primary/50 bg-primary/10"
+    if (profile.support_level === "experimental") return "border-accent/50 bg-accent/10"
+    return "border-border/80 bg-muted/50"
+  }
+  if (profile.support_level === "unavailable") return "border-border/50 bg-muted/20 opacity-70"
+  return "border-border/60 bg-card/30 hover:border-border/80 hover:bg-card/50"
+}
+
+const profileReasonText = (profile?: ServerProfile | null): string => {
+  if (!profile) return ""
+  return profile.support_reason || profile.description
 }
 
 const formatMonthlyPrice = (
@@ -563,21 +598,57 @@ const handleDialogUpdate = (value: boolean) => {
               <Label class="text-sm font-medium text-muted-foreground">
                 Server Profile
               </Label>
-              <Select v-model="formProfileKey" :disabled="formLoadingCatalog">
-                <SelectTrigger :class="selectTriggerClass">
-                  <SelectValue placeholder="Select profile" />
-                </SelectTrigger>
-                <SelectContent :class="selectContentClass">
-                  <SelectItem
-                    v-for="option in profileOptions"
-                    :key="option.value"
-                    :value="option.value"
-                    :class="selectItemClass"
-                  >
-                    <SelectItemText>{{ option.label }}</SelectItemText>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <div class="grid gap-2">
+                <button
+                  v-for="profile in profiles"
+                  :key="profile.key"
+                  type="button"
+                  :disabled="formLoadingCatalog || profile.support_level === 'unavailable'"
+                  class="w-full rounded-lg border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed"
+                  :class="profileCardClass(profile)"
+                  @click="formProfileKey = profile.key"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p class="text-sm font-medium text-foreground">{{ profile.name }}</p>
+                      <p class="text-xs text-muted-foreground">{{ profile.key }}</p>
+                    </div>
+                    <Badge :class="profileSupportClass(profile.support_level)">
+                      {{ supportLevelLabel(profile.support_level) }}
+                    </Badge>
+                  </div>
+                  <p class="mt-2 text-sm text-muted-foreground">
+                    {{ profile.description }}
+                  </p>
+                  <p class="mt-2 text-xs text-muted-foreground">
+                    Configure guarantee: {{ profile.configure_guarantee }}
+                  </p>
+                  <p v-if="profile.support_reason" class="mt-1 text-xs" :class="profile.support_level === 'unavailable' ? 'text-muted-foreground' : 'text-accent'">
+                    {{ profile.support_reason }}
+                  </p>
+                </button>
+              </div>
+              <div
+                v-if="selectedProfile"
+                class="rounded-lg border px-3 py-3"
+                :class="selectedProfileStatusClass"
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-medium text-foreground">{{ selectedProfile.name }}</span>
+                  <Badge :class="profileSupportClass(selectedProfile.support_level)">
+                    {{ supportLevelLabel(selectedProfile.support_level) }}
+                  </Badge>
+                </div>
+                <p class="mt-2 text-xs text-muted-foreground">
+                  {{ profileReasonText(selectedProfile) }}
+                </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Configure guarantee: {{ selectedProfile.configure_guarantee }}
+                </p>
+              </div>
+              <p v-else class="text-xs text-muted-foreground">
+                No selectable server profile is available for this provider yet.
+              </p>
             </div>
 
             <div class="space-y-1.5">
@@ -635,7 +706,18 @@ const handleDialogUpdate = (value: boolean) => {
               <p><strong class="text-foreground">Name:</strong> {{ formName }}</p>
               <p><strong class="text-foreground">Region:</strong> {{ formLocation }}</p>
               <p><strong class="text-foreground">Size:</strong> {{ selectedTypeLabel }}</p>
-              <p><strong class="text-foreground">Profile:</strong> {{ selectedProfile?.name || formProfileKey }}</p>
+              <div class="mt-1">
+                <p><strong class="text-foreground">Profile:</strong> {{ selectedProfile?.name || formProfileKey }}</p>
+                <div v-if="selectedProfile" class="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge :class="profileSupportClass(selectedProfile.support_level)">
+                    {{ supportLevelLabel(selectedProfile.support_level) }}
+                  </Badge>
+                  <span class="text-xs text-muted-foreground">Configure guarantee: {{ selectedProfile.configure_guarantee }}</span>
+                </div>
+                <p v-if="selectedProfile" class="mt-2 text-xs text-muted-foreground">
+                  {{ profileReasonText(selectedProfile) }}
+                </p>
+              </div>
             </div>
             <p class="text-xs text-muted-foreground">
               The base image is determined by the selected profile. Advanced networking, firewalls, and storage options are intentionally hidden for this managed flow.

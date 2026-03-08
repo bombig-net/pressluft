@@ -30,10 +30,14 @@ interface ServerSection {
 const sections: ServerSection[] = [
   { key: 'overview', label: 'Overview', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', description: 'Server status and quick actions' },
   { key: 'services', label: 'Services', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01', description: 'Running services and management' },
-  { key: 'sites', label: 'Sites', icon: 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9', description: 'Websites hosted on this server' },
+  { key: 'sites', label: 'Sites (planned)', icon: 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9', description: 'Reserved for future site workflows on this server' },
   { key: 'settings', label: 'Settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', description: 'Server configuration and management' },
   { key: 'activity', label: 'Activity', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', description: 'Recent events and job history' },
 ]
+
+const visibleSectionKeys = new Set(['overview', 'services', 'settings', 'activity'])
+
+const visibleSections = sections.filter((section) => visibleSectionKeys.has(section.key))
 
 const route = useRoute()
 const router = useRouter()
@@ -177,7 +181,7 @@ const restartService = async (serviceName: string) => {
 
 const activeSection = computed(() => {
   const tab = route.query.tab as string
-  const isValid = sections.some((s) => s.key === tab)
+  const isValid = visibleSections.some((section) => section.key === tab)
   return isValid ? tab : 'overview'
 })
 
@@ -655,7 +659,7 @@ onUnmounted(() => {
           >
             <nav aria-label="Server sections">
               <button
-                v-for="section in sections"
+                v-for="section in visibleSections"
                 :key="section.key"
                 :class="[
                   'flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors',
@@ -688,7 +692,7 @@ onUnmounted(() => {
         <aside class="hidden w-56 shrink-0 lg:block">
           <nav aria-label="Server sections" class="space-y-0.5">
             <button
-              v-for="section in sections"
+              v-for="section in visibleSections"
               :key="section.key"
               :class="[
                 'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
@@ -1006,10 +1010,10 @@ onUnmounted(() => {
                 <div class="rounded-lg border border-dashed border-border/50 px-4 py-8 text-center">
                   <h3 class="text-sm font-medium text-foreground">No sites yet</h3>
                   <p class="mt-1 text-sm text-muted-foreground">
-                    WordPress sites deployed to this server will appear here.
+                    This server-level sites view is reserved for a future round.
                   </p>
                   <p class="mt-3 text-xs text-muted-foreground">
-                    Site management features are coming soon.
+                    Site workflows are not implemented on this branch yet.
                   </p>
                 </div>
               </div>

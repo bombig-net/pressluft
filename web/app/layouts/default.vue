@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/sidebar"
 import {
   Activity,
-  Box,
   Globe,
   LayoutDashboard,
   Server,
@@ -30,8 +29,8 @@ const navSections = [
   {
     title: 'Resources',
     items: [
-      { label: 'Sites', icon: Globe, to: '/sites' },
       { label: 'Servers', icon: Server, to: '/servers' },
+      { label: 'Sites', icon: Globe, to: '/sites', badge: 'Planned' },
     ],
   },
   {
@@ -39,7 +38,6 @@ const navSections = [
     items: [
       { label: 'Activity', icon: Activity, to: '/activity' },
       { label: 'Settings', icon: Settings, to: '/settings' },
-      { label: 'Components', icon: Box, to: '/components' },
     ],
   },
 ]
@@ -132,6 +130,12 @@ const isActive = (to: string) =>
             >
               <component :is="item.icon" class="h-4 w-4 shrink-0" aria-hidden="true" />
               <span class="group-data-[collapsible=icon]:hidden">{{ item.label }}</span>
+              <span
+                v-if="item.badge"
+                class="ml-auto rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground group-data-[collapsible=icon]:hidden"
+              >
+                {{ item.badge }}
+              </span>
             </NuxtLink>
           </div>
         </div>

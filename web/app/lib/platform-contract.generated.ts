@@ -444,60 +444,6 @@ export const platformContract = {
         "required": false,
         "description": "Path to ansible-playbook."
       }
-    ],
-    "smoke": [
-      {
-        "name": "PRESSLUFT_API_BASE",
-        "required": true,
-        "description": "Control-plane base URL for the smoke scripts."
-      },
-      {
-        "name": "PRESSLUFT_HETZNER_API_TOKEN",
-        "required": true,
-        "description": "Disposable Hetzner API token."
-      },
-      {
-        "name": "PRESSLUFT_PROVIDER_NAME",
-        "required": false,
-        "default_value": "hetzner-smoke",
-        "description": "Provider name used by the smoke flow."
-      },
-      {
-        "name": "PRESSLUFT_SERVER_NAME",
-        "required": false,
-        "default_value": "pressluft-smoke",
-        "description": "Server name used by the smoke flow."
-      },
-      {
-        "name": "PRESSLUFT_SERVER_LOCATION",
-        "required": false,
-        "default_value": "nbg1",
-        "description": "Provider location used by the smoke flow."
-      },
-      {
-        "name": "PRESSLUFT_SERVER_TYPE",
-        "required": false,
-        "default_value": "cx22",
-        "description": "Provider server type used by the smoke flow."
-      },
-      {
-        "name": "PRESSLUFT_PROFILE_KEY",
-        "required": false,
-        "default_value": "nginx-stack",
-        "description": "Profile key used by the smoke flow."
-      },
-      {
-        "name": "PRESSLUFT_RESTART_SERVICE",
-        "required": false,
-        "default_value": "nginx",
-        "description": "Service name used for restart verification."
-      },
-      {
-        "name": "PRESSLUFT_SMOKE_STATE_DIR",
-        "required": false,
-        "default_value": "ops/tests/.smoke-state",
-        "description": "State directory for smoke step hand-off."
-      }
     ]
   }
 } as const

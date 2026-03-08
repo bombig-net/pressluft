@@ -163,20 +163,6 @@ func AgentEnvSpec() []EnvVarSpec {
 	}
 }
 
-func SmokeEnvSpec() []EnvVarSpec {
-	return []EnvVarSpec{
-		{Name: "PRESSLUFT_API_BASE", Scope: "smoke", Required: true, Description: "Control-plane base URL for the smoke scripts."},
-		{Name: "PRESSLUFT_HETZNER_API_TOKEN", Scope: "smoke", Required: true, Description: "Disposable Hetzner API token."},
-		{Name: "PRESSLUFT_PROVIDER_NAME", Scope: "smoke", DefaultValue: "hetzner-smoke", Description: "Provider name used by the smoke flow."},
-		{Name: "PRESSLUFT_SERVER_NAME", Scope: "smoke", DefaultValue: "pressluft-smoke", Description: "Server name used by the smoke flow."},
-		{Name: "PRESSLUFT_SERVER_LOCATION", Scope: "smoke", DefaultValue: "nbg1", Description: "Provider location used by the smoke flow."},
-		{Name: "PRESSLUFT_SERVER_TYPE", Scope: "smoke", DefaultValue: "cx22", Description: "Provider server type used by the smoke flow."},
-		{Name: "PRESSLUFT_PROFILE_KEY", Scope: "smoke", DefaultValue: "nginx-stack", Description: "Profile key used by the smoke flow."},
-		{Name: "PRESSLUFT_RESTART_SERVICE", Scope: "smoke", DefaultValue: "nginx", Description: "Service name used for restart verification."},
-		{Name: "PRESSLUFT_SMOKE_STATE_DIR", Scope: "smoke", DefaultValue: "ops/tests/.smoke-state", Description: "State directory for smoke step hand-off."},
-	}
-}
-
 func resolveDBPath(dataDir string) string {
 	if p := strings.TrimSpace(os.Getenv("PRESSLUFT_DB")); p != "" {
 		return p
