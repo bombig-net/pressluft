@@ -39,15 +39,16 @@ type User struct {
 }
 
 type Session struct {
-	ID         int64
-	UserID     int64
-	SessionID  string
-	CreatedAt  string
-	ExpiresAt  string
-	RevokedAt  string
-	LastUsedAt string
-	UserAgent  string
-	IP         string
+	ID                int64
+	UserID            int64
+	SessionID         string
+	CreatedAt         string
+	ExpiresAt         string
+	AbsoluteExpiresAt string
+	RevokedAt         string
+	LastUsedAt        string
+	UserAgent         string
+	IP                string
 }
 
 type Store struct {
@@ -139,11 +140,11 @@ func (s *Store) UpdateLastLogin(ctx context.Context, userID int64) error {
 	return nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, userID int64, tokenHash string, expiresAt time.Time, userAgent, ip string) error {
+func (s *Store) CreateSession(ctx context.Context, userID int64, tokenHash string, expiresAt, absoluteExpiresAt time.Time, userAgent, ip string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO sessions (user_id, session_hash, created_at, expires_at, last_used_at, user_agent, ip)
-		VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?)
-	`, userID, tokenHash, expiresAt.UTC().Format(time.RFC3339), nullableString(userAgent), nullableString(ip))
+		INSERT INTO sessions (user_id, session_hash, created_at, expires_at, absolute_expires_at, last_used_at, user_agent, ip)
+		VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?, ?)
+	`, userID, tokenHash, expiresAt.UTC().Format(time.RFC3339), absoluteExpiresAt.UTC().Format(time.RFC3339), nullableString(userAgent), nullableString(ip))
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
 	}
@@ -158,6 +159,7 @@ func (s *Store) GetSessionUserByHash(ctx context.Context, tokenHash string) (*Us
 		WHERE s.session_hash = ?
 		  AND s.revoked_at IS NULL
 		  AND datetime(s.expires_at) > datetime('now')
+		  AND datetime(COALESCE(s.absolute_expires_at, s.expires_at)) > datetime('now')
 		  AND u.status = 'active'
 		LIMIT 1
 	`, tokenHash)
@@ -177,10 +179,15 @@ func (s *Store) TouchSession(ctx context.Context, tokenHash string, expiresAt ti
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
 		SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-		    expires_at = ?
+		    expires_at = CASE
+		        WHEN datetime(?) < datetime(COALESCE(absolute_expires_at, expires_at)) THEN ?
+		        ELSE COALESCE(absolute_expires_at, expires_at)
+		    END
 		WHERE session_hash = ?
 		  AND revoked_at IS NULL
-	`, expiresAt.UTC().Format(time.RFC3339), tokenHash)
+		  AND datetime(expires_at) > datetime('now')
+		  AND datetime(COALESCE(absolute_expires_at, expires_at)) > datetime('now')
+	`, expiresAt.UTC().Format(time.RFC3339), expiresAt.UTC().Format(time.RFC3339), tokenHash)
 	if err != nil {
 		return fmt.Errorf("touch session: %w", err)
 	}

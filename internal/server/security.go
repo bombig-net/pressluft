@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -134,9 +135,12 @@ func withRateLimit(next http.Handler, limiter *rateLimiter, prefix string) http.
 }
 
 func requestRateLimitKey(r *http.Request) string {
-	ip := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if ip == "" {
-		ip = strings.TrimSpace(r.RemoteAddr)
+	if r == nil {
+		return ""
 	}
-	return ip
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }

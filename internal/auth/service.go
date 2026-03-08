@@ -61,8 +61,13 @@ func (s *Service) Login(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		return AnonymousActor(), err
 	}
 	tokenHash := HashOpaqueToken(s.sessionSecret, token)
-	expiresAt := time.Now().UTC().Add(s.idleTimeout)
-	if err := s.store.CreateSession(ctx, user.ID, tokenHash, expiresAt, r.UserAgent(), extractRequestIP(r)); err != nil {
+	now := time.Now().UTC()
+	expiresAt := now.Add(s.idleTimeout)
+	absoluteExpiresAt := now.Add(s.absoluteTimeout)
+	if absoluteExpiresAt.Before(expiresAt) {
+		expiresAt = absoluteExpiresAt
+	}
+	if err := s.store.CreateSession(ctx, user.ID, tokenHash, expiresAt, absoluteExpiresAt, r.UserAgent(), extractRequestIP(r)); err != nil {
 		return AnonymousActor(), err
 	}
 	if err := s.store.UpdateLastLogin(ctx, user.ID); err != nil {
