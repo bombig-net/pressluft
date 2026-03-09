@@ -12,14 +12,13 @@ DEV_UI_HOST ?= 0.0.0.0
 TMPDIR ?= /tmp
 GOCACHE ?= $(TMPDIR)/go-build
 ANSIBLE_LOCAL_TEMP ?= $(TMPDIR)/ansible-local
-ANSIBLE_REMOTE_TEMP ?= $(TMPDIR)/ansible-remote
 NODE_OPTIONS ?= --max-old-space-size=8192
 
 WEB_DIR := web
 EMBED_DIST_DIR := internal/server/dist
 
 GO_ENV = env TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)"
-ANSIBLE_ENV = env TMPDIR="$(TMPDIR)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)"
+ANSIBLE_ENV = env TMPDIR="$(TMPDIR)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)"
 WEB_ENV = env NODE_OPTIONS="$(NODE_OPTIONS)"
 
 UNIT_TEST_PACKAGES := \
@@ -79,7 +78,7 @@ help:
 	@printf '  %-28s %s\n' 'dev-reset' 'Reset the local Pressluft state bundle (requires CONFIRM=1)'
 
 prepare-env:
-	mkdir -p "$(GOCACHE)" "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"
+	mkdir -p "$(GOCACHE)" "$(ANSIBLE_LOCAL_TEMP)"
 
 generate-contract: prepare-env
 	$(GO_ENV) $(GO) run ./cmd/pressluft-contractgen -format ts > "$(WEB_DIR)/app/lib/platform-contract.generated.ts"
@@ -119,10 +118,10 @@ agent-dev: prepare-env
 all: build agent
 
 dev: agent-dev frontend-install
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)" DEV_WORKFLOW="dev" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" DEV_WORKFLOW="dev" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
 
 dev-lab: agent-dev frontend-install
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)" DEV_WORKFLOW="lab" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" DEV_WORKFLOW="lab" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
 
 dev-status: prepare-env
 	$(GO_ENV) $(GO) run ./cmd/pressluft-devctl status
