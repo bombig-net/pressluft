@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,11 +19,13 @@ import (
 
 	"pressluft/internal/activity"
 	"pressluft/internal/agentauth"
+	"pressluft/internal/auth"
 	"pressluft/internal/database"
 	"pressluft/internal/dispatch"
 	"pressluft/internal/envconfig"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/pki"
+	"pressluft/internal/platform"
 	"pressluft/internal/provider"
 	"pressluft/internal/registration"
 	"pressluft/internal/runner/ansible"
@@ -35,6 +39,11 @@ import (
 )
 
 const defaultAddr = ":8080"
+
+type playbookPaths struct {
+	basePath  string // root for per-provider playbook directories
+	configure string // provider-agnostic configure playbook
+}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -52,16 +61,27 @@ func main() {
 	allowGenerate := false
 	if strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH")) == "" {
 		allowGenerate = true
+	slog.SetDefault(logger)
+
+	cwd, _ := os.Getwd()
+	runtimeConfig, err := envconfig.ResolveControlPlaneRuntime(isDevBuild(), cwd)
+	if err != nil {
+		log.Fatalf("resolve control-plane config: %v", err)
 	}
-	generated, err := security.EnsureAgeKey(ageKeyPath, allowGenerate)
+	executionMode := runtimeConfig.ExecutionMode
+	logExecutionMode(logger, executionMode)
+
+	allowGenerate := strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH")) == ""
+	generated, err := security.EnsureAgeKey(runtimeConfig.AgeKeyPath, allowGenerate)
 	if err != nil {
 		log.Fatalf("ensure age key: %v", err)
 	}
 	if generated {
-		logger.Info("age key generated", "path", ageKeyPath)
+		logger.Info("age key generated", "path", runtimeConfig.AgeKeyPath)
 	}
 
 	db, err := database.Open(paths.DBPath, logger)
+	db, err := database.Open(runtimeConfig.DBPath, logger)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
@@ -76,47 +96,64 @@ func main() {
 	pkiStore := pki.NewStore(db.DB)
 	registrationStore := registration.NewStore(db.DB)
 	ca, err := pki.LoadOrCreateCA(db.DB, ageKeyPath, paths.CAKeyPath)
+	authStore := auth.NewStore(db.DB)
+	ca, err := pki.LoadOrCreateCA(db.DB, runtimeConfig.AgeKeyPath, runtimeConfig.CAKeyPath)
 	if err != nil {
 		log.Fatalf("load or create CA: %v", err)
 	}
-
-	ansibleDir := strings.TrimSpace(os.Getenv("PRESSLUFT_ANSIBLE_DIR"))
-	if ansibleDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			ansibleDir = cwd
-		} else {
-			ansibleDir = "."
-		}
+	sessionSecret, resolvedSessionSecretPath, err := auth.LoadSessionSecret(runtimeConfig.SessionSecretPath)
+	if err != nil {
+		log.Fatalf("load session secret: %v", err)
 	}
-	ansibleBinary, err := resolveAnsibleBinary(ansibleDir)
+	logger.Info("session secret ready", "path", resolvedSessionSecretPath)
+
+	authService := auth.NewService(authStore, sessionSecret, runtimeConfig.SessionIdleTimeout, runtimeConfig.SessionAbsoluteTimeout, runtimeConfig.SessionCookieSecure)
+
+	bootstrapEmail, bootstrapPassword, err := auth.BootstrapCredentials(executionMode)
+	if err != nil && executionMode != platform.ExecutionModeDev {
+		log.Fatalf("resolve bootstrap admin credentials: %v", err)
+	}
+	bootstrapUser, err := authService.EnsureBootstrapAdmin(context.Background(), bootstrapEmail, bootstrapPassword)
+	if err != nil && executionMode != platform.ExecutionModeDev {
+		log.Fatalf("ensure bootstrap admin: %v", err)
+	}
+	if bootstrapUser != nil {
+		logger.Info("bootstrap admin created", "email", bootstrapUser.Email)
+		_, _ = activityStore.Emit(context.Background(), activity.EmitInput{
+			EventType:    activity.EventSecurityBootstrapAdmin,
+			Category:     activity.CategorySecurity,
+			Level:        activity.LevelInfo,
+			ResourceType: activity.ResourceAccount,
+			ActorType:    activity.ActorSystem,
+			ActorID:      fmt.Sprintf("%d", bootstrapUser.ID),
+			Title:        fmt.Sprintf("Bootstrap admin %s created", bootstrapUser.Email),
+		})
+	}
+
+	ansibleBinary, err := resolveAnsibleBinary(runtimeConfig.AnsibleBinary, runtimeConfig.AnsibleDir)
 	if err != nil {
 		log.Fatalf("resolve ansible binary: %v", err)
 	}
-	if err := logAnsibleVersion(ansibleBinary, ansibleDir, logger); err != nil {
+	if err := logAnsibleVersion(ansibleBinary, runtimeConfig.AnsibleDir, logger); err != nil {
 		log.Fatalf("ansible preflight failed: %v", err)
 	}
-	playbookPath := "ops/ansible/playbooks/provision.yml"
-	configurePlaybookPath := "ops/ansible/playbooks/configure.yml"
-	deletePlaybookPath := "ops/ansible/playbooks/delete_server.yml"
-	rebuildPlaybookPath := "ops/ansible/playbooks/rebuild_server.yml"
-	resizePlaybookPath := "ops/ansible/playbooks/resize_server.yml"
-	firewallsPlaybookPath := "ops/ansible/playbooks/update_firewalls.yml"
-	volumePlaybookPath := "ops/ansible/playbooks/manage_volume.yml"
+	playbooks := defaultPlaybookPaths()
 
-	controlPlaneURL := strings.TrimSpace(os.Getenv("PRESSLUFT_CONTROL_PLANE_URL"))
+	controlPlaneURL := runtimeConfig.ControlPlaneURL
+	if executionMode == platform.ExecutionModeDev && platform.DetectCallbackURLMode(controlPlaneURL) == platform.CallbackURLModeEphemeral {
+		logger.Warn("ephemeral dev callback URL detected",
+			"control_plane_url", controlPlaneURL,
+			"reconnect_durability", "remote agents configured against Cloudflare quick tunnels will not reconnect after control-plane restart",
+		)
+	}
 
-	ansibleRunner := ansible.NewAdapter(ansibleBinary, ansibleDir, []string{
-		playbookPath,
-		configurePlaybookPath,
-		deletePlaybookPath,
-		rebuildPlaybookPath,
-		resizePlaybookPath,
-		firewallsPlaybookPath,
-		volumePlaybookPath,
+	ansibleRunner := ansible.NewAdapter(ansibleBinary, runtimeConfig.AnsibleDir, []string{
+		playbooks.configure,
+		playbooks.basePath + "/", // allow all provider-scoped playbooks under the base path
 	})
 
 	hub := ws.NewHub()
-	agentRunner := dispatch.NewAgentRunner(hub, jobStore)
+	agentRunner := dispatch.NewAgentRunner(hub, jobStore, logger)
 
 	// Create worker with executor
 	executor := worker.NewExecutor(
@@ -126,15 +163,12 @@ func main() {
 		activityStore,
 		ansibleRunner,
 		worker.ExecutorConfig{
-			ProvisionPlaybookPath: playbookPath,
-			ConfigurePlaybookPath: configurePlaybookPath,
-			DeletePlaybookPath:    deletePlaybookPath,
-			RebuildPlaybookPath:   rebuildPlaybookPath,
-			ResizePlaybookPath:    resizePlaybookPath,
-			FirewallsPlaybookPath: firewallsPlaybookPath,
-			VolumePlaybookPath:    volumePlaybookPath,
+			PlaybookBasePath:      playbooks.basePath,
+			ConfigurePlaybookPath: playbooks.configure,
 			ControlPlaneURL:       controlPlaneURL,
+			ExecutionMode:         executionMode,
 			DevTokenStore:         agentTokenStore,
+			RegistrationStore:     registrationStore,
 			AgentRunner:           agentRunner,
 		},
 		logger,
@@ -150,18 +184,30 @@ func main() {
 
 	resultWaiter := ws.NewResultWaiter()
 	hub.SetResultWaiter(resultWaiter)
-	completer := dispatch.NewCompleter(jobStore, &activityLoggerAdapter{logger: logger}, logger)
-	wsHandler := ws.NewHandler(hub, completer, resultWaiter, logger)
+	completer := dispatch.NewCompleter(jobStore, activityStore, logger)
+	wsHandler := ws.NewHandler(hub, completer, resultWaiter, serverStore, logger)
 	wsHTTPHandler := server.NewWSHandler(hub, wsHandler, pkiStore, agentTokenStore, logger)
 	nodeHandler := server.NewNodeHandler(db.DB, pkiStore, registrationStore, ca, logger)
 
 	monitor := ws.NewMonitor(hub, serverStore, logger)
 	go monitor.Start(ctx)
 
+	operatorAuthenticator := operatorAuthenticatorForMode(executionMode, authService)
+
 	httpServer := &http.Server{
 		Addr:              resolveAddr(),
-		Handler:           server.WithRequestLogging(server.NewHandlerWithHub(db.DB, hub, wsHTTPHandler, nodeHandler), logger),
+		Handler:           server.WithRequestLogging(server.NewHandlerWithOptions(db.DB, hub, wsHTTPHandler, nodeHandler, server.HandlerOptions{Authenticator: operatorAuthenticator, AuthService: authService, IsDev: executionMode == platform.ExecutionModeDev, ControlPlaneURL: controlPlaneURL}), logger),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
+	}
+	listenAndServe := func() error {
+		return httpServer.ListenAndServe()
+	}
+	if executionMode == platform.ExecutionModeProductionBootstrap {
+		listenAndServe = configureProductionTLSServer(httpServer, ca, controlPlaneURL, runtimeConfig.TLSCertFile, runtimeConfig.TLSKeyFile)
 	}
 
 	// Handle shutdown signals
@@ -183,10 +229,44 @@ func main() {
 
 	logger.Info("pressluft listening", "addr", httpServer.Addr, "mode", envconfig.Mode)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	logger.Info("pressluft listening", "addr", httpServer.Addr)
+	if err := listenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server failed: %v", err)
 	}
 
 	logger.Info("pressluft stopped")
+}
+
+func defaultPlaybookPaths() playbookPaths {
+	return playbookPaths{
+		basePath:  "ops/ansible/playbooks",
+		configure: "ops/ansible/playbooks/configure.yml",
+	}
+}
+
+type activityLoggerAdapter struct {
+	logger *slog.Logger
+func operatorAuthenticatorForMode(mode platform.ExecutionMode, authService *auth.Service) auth.Authenticator {
+	if mode == platform.ExecutionModeDev {
+		return auth.NewDevAuthenticator()
+	}
+	return auth.NewSessionAuthenticator(authService)
+}
+
+func logExecutionMode(logger *slog.Logger, mode platform.ExecutionMode) {
+	logger.Info("platform contract loaded",
+		"execution_mode", mode,
+		"contract_package", "pressluft/internal/contract",
+	)
+
+	switch mode {
+	case platform.ExecutionModeDev:
+		logger.Info("development transport enabled", "agent_trust", "dev websocket token", "server_tls", "not required")
+	case platform.ExecutionModeSingleNodeLocal:
+		logger.Warn("single-node local control plane mode is for local infrastructure work only", "agent_bootstrap", "disabled", "provider_support", "hetzner only")
+	case platform.ExecutionModeProductionBootstrap:
+		logger.Info("production bootstrap path enabled", "server_tls", "required in-process", "agent_transport", "wss plus mTLS")
+	}
 }
 
 func resolveAddr() string {
@@ -200,20 +280,7 @@ func resolveAddr() string {
 	return ":" + port
 }
 
-type activityLoggerAdapter struct {
-	logger *slog.Logger
-}
-
-func (a *activityLoggerAdapter) Log(ctx context.Context, serverID int64, action string, details string) error {
-	a.logger.Info("agent log", "server_id", serverID, "action", action, "details", details)
-	return nil
-}
-
-func resolveAnsibleBinary(ansibleDir string) (string, error) {
-	ansibleBinary := strings.TrimSpace(os.Getenv("PRESSLUFT_ANSIBLE_BIN"))
-	if ansibleBinary == "" {
-		ansibleBinary = filepath.Join(ansibleDir, ".venv", "bin", "ansible-playbook")
-	}
+func resolveAnsibleBinary(ansibleBinary, ansibleDir string) (string, error) {
 	if !filepath.IsAbs(ansibleBinary) {
 		ansibleBinary = filepath.Join(ansibleDir, ansibleBinary)
 	}
@@ -254,5 +321,33 @@ func logAnsibleVersion(binaryPath, workingDir string, logger *slog.Logger) error
 		return fmt.Errorf("ansible-playbook --version failed: %w (output=%s)", err, strings.TrimSpace(string(output)))
 	}
 	logger.Info("ansible preflight", "binary", binaryPath, "version", strings.TrimSpace(string(output)))
+	return nil
+}
+
+func configureProductionTLSServer(httpServer *http.Server, ca *pki.CA, controlPlaneURL, tlsCertFile, tlsKeyFile string) func() error {
+	if err := resolveProductionTLSConfig(controlPlaneURL, tlsCertFile, tlsKeyFile); err != nil {
+		log.Fatalf("resolve production TLS config: %v", err)
+	}
+	httpServer.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  ca.CertPool(),
+	}
+	return func() error {
+		return httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+	}
+}
+
+func resolveProductionTLSConfig(controlPlaneURL, tlsCertFile, tlsKeyFile string) error {
+	if strings.TrimSpace(tlsCertFile) == "" || strings.TrimSpace(tlsKeyFile) == "" {
+		return fmt.Errorf("PRESSLUFT_TLS_CERT_FILE and PRESSLUFT_TLS_KEY_FILE are required in production-bootstrap mode")
+	}
+	parsedURL, err := url.Parse(strings.TrimSpace(controlPlaneURL))
+	if err != nil {
+		return fmt.Errorf("parse PRESSLUFT_CONTROL_PLANE_URL: %w", err)
+	}
+	if parsedURL.Scheme != "https" || parsedURL.Host == "" {
+		return fmt.Errorf("PRESSLUFT_CONTROL_PLANE_URL must be an https URL in production-bootstrap mode")
+	}
 	return nil
 }
