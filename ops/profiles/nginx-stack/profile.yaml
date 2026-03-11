@@ -1,14 +1,14 @@
 key: nginx-stack
 name: NGINX Stack
-version: 1.1.0
+version: 1.2.0
 description: >
   Managed Ubuntu 24.04 WordPress hosting baseline with NGINX, PHP-FPM,
-  MariaDB, Redis, ACME automation, and the Pressluft agent.
+  MariaDB, Redis, WP-CLI, ACME automation, and the Pressluft agent.
 
 configure_guarantee: >
   A successful configure run applies the base system, deploys the Pressluft
   agent, configures a WordPress-ready NGINX stack with MariaDB, Redis,
-  PHP-FPM, TLS scaffolding, and ACME helpers, and verifies the managed
+  PHP-FPM, WP-CLI, TLS scaffolding, and ACME helpers, and verifies the managed
   services, files, listeners, and health checks before the server is marked
   ready.
 
@@ -121,6 +121,7 @@ verification:
     - path: /etc/systemd/system/pressluft-acme-renew.service
     - path: /etc/systemd/system/pressluft-acme-renew.timer
     - path: /srv/www/pressluft/default/public/index.html
+    - path: /usr/local/bin/wp
     - path: /usr/local/bin/pressluft-acme-issue
     - path: /usr/local/bin/pressluft-acme-renew
     - path: /var/lib/pressluft/.acme.sh/acme.sh
@@ -158,3 +159,5 @@ verification:
       command: curl --fail --silent --insecure https://127.0.0.1/
     - name: redis-ping
       command: redis-cli ping
+    - name: wp-cli-info
+      command: wp --allow-root --info

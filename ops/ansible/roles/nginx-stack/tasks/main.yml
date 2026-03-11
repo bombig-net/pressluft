@@ -19,6 +19,19 @@
       - redis-server
     state: present
 
+- name: Install WP-CLI
+  ansible.builtin.get_url:
+    url: https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar
+    dest: /usr/local/bin/wp
+    owner: root
+    group: root
+    mode: '0755'
+    checksum: sha256:https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar.sha256
+
+- name: Verify WP-CLI installation
+  ansible.builtin.command: wp --allow-root --info
+  changed_when: false
+
 - name: Ensure nginx-stack directories exist
   ansible.builtin.file:
     path: "{{ item.path }}"
