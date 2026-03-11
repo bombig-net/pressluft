@@ -262,7 +262,12 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 		wordpressVersion = strings.TrimSpace(*in.WordPressVersion)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin update site tx: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
 		`UPDATE sites
 		 SET server_id = ?, name = ?, primary_domain = ?, status = ?, wordpress_path = ?, php_version = ?, wordpress_version = ?, updated_at = ?
 		 WHERE id = ?`,
@@ -286,14 +291,17 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 		domainStore := NewDomainStore(s.db)
 		primaryDomain = strings.TrimSpace(*in.PrimaryDomain)
 		if primaryDomain == "" {
-			if err := domainStore.ClearPrimaryHostnameForSite(ctx, publicID); err != nil {
+			if err := domainStore.clearPrimaryHostnameForSiteTx(ctx, tx, publicID); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := domainStore.SetPrimaryHostnameForSite(ctx, publicID, primaryDomain, DomainSourceManual, DomainOwnershipCustomer); err != nil {
+			if err := domainStore.setPrimaryHostnameForSiteTx(ctx, tx, publicID, primaryDomain, DomainSourceManual, DomainOwnershipCustomer); err != nil {
 				return nil, err
 			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit update site tx: %w", err)
 	}
 	return s.GetByID(ctx, publicID)
 }
@@ -303,15 +311,23 @@ func (s *SiteStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM domains WHERE site_id = ?`, publicID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete site tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE site_id = ?`, publicID); err != nil {
 		return fmt.Errorf("delete site domains: %w", err)
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sites WHERE id = ?`, publicID)
+	res, err := tx.ExecContext(ctx, `DELETE FROM sites WHERE id = ?`, publicID)
 	if err != nil {
 		return fmt.Errorf("delete site: %w", err)
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return fmt.Errorf("site %s not found", publicID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete site tx: %w", err)
 	}
 	return nil
 }

@@ -185,6 +185,58 @@ func TestSiteStoreUpdate(t *testing.T) {
 	}
 }
 
+func TestSiteStoreUpdateRollsBackWhenPrimaryDomainAssignmentFails(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	siteID, err := store.Create(context.Background(), CreateSiteInput{
+		ServerID:      serverID,
+		Name:          "Original",
+		PrimaryDomain: "original.example.test",
+		Status:        SiteStatusDraft,
+	})
+	if err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	_, err = domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "pressluft.dev",
+		Kind:      DomainKindBase,
+		Ownership: DomainOwnershipPlatform,
+		Source:    DomainSourceSandbox,
+		Status:    DomainStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create base domain: %v", err)
+	}
+	updatedName := "Changed"
+	updatedStatus := SiteStatusActive
+	invalidPrimary := "pressluft.dev"
+
+	_, err = store.Update(context.Background(), siteID, UpdateSiteInput{
+		Name:          &updatedName,
+		Status:        &updatedStatus,
+		PrimaryDomain: &invalidPrimary,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used as a site primary domain") {
+		t.Fatalf("update error = %v, want primary domain assignment failure", err)
+	}
+
+	site, err := store.GetByID(context.Background(), siteID)
+	if err != nil {
+		t.Fatalf("get site after failed update: %v", err)
+	}
+	if site.Name != "Original" {
+		t.Fatalf("name after failed update = %q, want %q", site.Name, "Original")
+	}
+	if site.Status != SiteStatusDraft {
+		t.Fatalf("status after failed update = %q, want %q", site.Status, SiteStatusDraft)
+	}
+	if site.PrimaryDomain != "original.example.test" {
+		t.Fatalf("primary_domain after failed update = %q, want %q", site.PrimaryDomain, "original.example.test")
+	}
+}
+
 func TestSiteStoreDelete(t *testing.T) {
 	db := mustOpenTestDB(t)
 	store := NewSiteStore(db)

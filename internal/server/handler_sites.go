@@ -132,7 +132,7 @@ func (sh *sitesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(err.Error(), "server ") && strings.Contains(err.Error(), "not found"):
 			respondError(w, http.StatusNotFound, err.Error())
-		case strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unsupported site status") || strings.Contains(err.Error(), "primary_domain_config") || strings.Contains(err.Error(), "use either") || strings.Contains(err.Error(), "valid domain name"):
+		case strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unsupported site status") || strings.Contains(err.Error(), "primary_domain_config") || strings.Contains(err.Error(), "use either") || strings.Contains(err.Error(), "valid domain name") || strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "cannot"):
 			respondError(w, http.StatusBadRequest, err.Error())
 		default:
 			respondError(w, http.StatusInternalServerError, "failed to create site: "+err.Error())
@@ -206,7 +206,7 @@ func (sh *sitesHandler) handleUpdate(w http.ResponseWriter, r *http.Request, sit
 		switch {
 		case strings.Contains(err.Error(), "not found"):
 			respondError(w, http.StatusNotFound, err.Error())
-		case strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unsupported site status"):
+		case strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unsupported site status") || strings.Contains(err.Error(), "valid domain name") || strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "cannot"):
 			respondError(w, http.StatusBadRequest, err.Error())
 		default:
 			respondError(w, http.StatusInternalServerError, "failed to update site: "+err.Error())

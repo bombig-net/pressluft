@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,5 +145,129 @@ func TestDomainStoreEnsurePlatformBaseDomains(t *testing.T) {
 	}
 	if byHostname["pressluft.dev"].Status != DomainStatusPending {
 		t.Fatalf("pressluft.dev status = %q, want %q", byHostname["pressluft.dev"].Status, DomainStatusPending)
+	}
+}
+
+func TestDomainStoreSetPrimaryHostnameForSiteRejectsAttachedHostnameConflict(t *testing.T) {
+	db := mustOpenTestDB(t)
+	siteStore := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", PrimaryDomain: "one.example.test", Status: SiteStatusDraft})
+	if err != nil {
+		t.Fatalf("create first site: %v", err)
+	}
+	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", Status: SiteStatusDraft})
+	if err != nil {
+		t.Fatalf("create second site: %v", err)
+	}
+
+	err = domainStore.SetPrimaryHostnameForSite(context.Background(), siteTwoID, "one.example.test", DomainSourceManual, DomainOwnershipCustomer)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("set primary error = %v, want hostname conflict", err)
+	}
+
+	siteOne, err := siteStore.GetByID(context.Background(), siteOneID)
+	if err != nil {
+		t.Fatalf("get first site: %v", err)
+	}
+	if siteOne.PrimaryDomain != "one.example.test" {
+		t.Fatalf("first site primary_domain = %q, want %q", siteOne.PrimaryDomain, "one.example.test")
+	}
+	siteTwo, err := siteStore.GetByID(context.Background(), siteTwoID)
+	if err != nil {
+		t.Fatalf("get second site: %v", err)
+	}
+	if siteTwo.PrimaryDomain != "" {
+		t.Fatalf("second site primary_domain = %q, want empty", siteTwo.PrimaryDomain)
+	}
+}
+
+func TestDomainStoreDeletePromotesReplacementPrimary(t *testing.T) {
+	db := mustOpenTestDB(t)
+	siteStore := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	siteID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Northwind", Status: SiteStatusDraft})
+	if err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	primaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteID, IsPrimary: true})
+	if err != nil {
+		t.Fatalf("create primary domain: %v", err)
+	}
+	secondaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteID})
+	if err != nil {
+		t.Fatalf("create secondary domain: %v", err)
+	}
+
+	if err := domainStore.Delete(context.Background(), primaryID); err != nil {
+		t.Fatalf("delete primary domain: %v", err)
+	}
+
+	secondary, err := domainStore.GetByID(context.Background(), secondaryID)
+	if err != nil {
+		t.Fatalf("get promoted domain: %v", err)
+	}
+	if !secondary.IsPrimary {
+		t.Fatal("expected secondary domain to be promoted to primary")
+	}
+	site, err := siteStore.GetByID(context.Background(), siteID)
+	if err != nil {
+		t.Fatalf("get site: %v", err)
+	}
+	if site.PrimaryDomain != "secondary.example.test" {
+		t.Fatalf("site primary_domain = %q, want %q", site.PrimaryDomain, "secondary.example.test")
+	}
+}
+
+func TestDomainStoreMovingPrimaryPromotesReplacementOnPreviousSite(t *testing.T) {
+	db := mustOpenTestDB(t)
+	siteStore := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", Status: SiteStatusDraft})
+	if err != nil {
+		t.Fatalf("create first site: %v", err)
+	}
+	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", Status: SiteStatusDraft})
+	if err != nil {
+		t.Fatalf("create second site: %v", err)
+	}
+	movedID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteOneID, IsPrimary: true})
+	if err != nil {
+		t.Fatalf("create moved domain: %v", err)
+	}
+	replacementID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteOneID})
+	if err != nil {
+		t.Fatalf("create replacement domain: %v", err)
+	}
+	isPrimary := true
+	newSiteID := siteTwoID
+	_, err = domainStore.Update(context.Background(), movedID, UpdateDomainInput{SiteID: &newSiteID, IsPrimary: &isPrimary})
+	if err != nil {
+		t.Fatalf("move primary domain: %v", err)
+	}
+
+	replacement, err := domainStore.GetByID(context.Background(), replacementID)
+	if err != nil {
+		t.Fatalf("get replacement domain: %v", err)
+	}
+	if !replacement.IsPrimary {
+		t.Fatal("expected replacement domain to become primary on previous site")
+	}
+	siteOne, err := siteStore.GetByID(context.Background(), siteOneID)
+	if err != nil {
+		t.Fatalf("get first site: %v", err)
+	}
+	if siteOne.PrimaryDomain != "secondary.example.test" {
+		t.Fatalf("first site primary_domain = %q, want %q", siteOne.PrimaryDomain, "secondary.example.test")
+	}
+	siteTwo, err := siteStore.GetByID(context.Background(), siteTwoID)
+	if err != nil {
+		t.Fatalf("get second site: %v", err)
+	}
+	if siteTwo.PrimaryDomain != "primary.example.test" {
+		t.Fatalf("second site primary_domain = %q, want %q", siteTwo.PrimaryDomain, "primary.example.test")
 	}
 }

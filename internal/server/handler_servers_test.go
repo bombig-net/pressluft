@@ -392,6 +392,16 @@ func mustOpenServerHandlerDB(t *testing.T) *sql.DB {
 	`); err != nil {
 		t.Fatalf("create domains table: %v", err)
 	}
+	if _, err := db.Exec(`
+		CREATE UNIQUE INDEX idx_domains_hostname_unique ON domains(hostname);
+		CREATE INDEX idx_domains_site_id ON domains(site_id);
+		CREATE INDEX idx_domains_parent_domain_id ON domains(parent_domain_id);
+		CREATE INDEX idx_domains_status ON domains(status);
+		CREATE INDEX idx_domains_kind ON domains(kind);
+		CREATE UNIQUE INDEX idx_domains_primary_site_unique ON domains(site_id) WHERE site_id IS NOT NULL AND is_primary = 1;
+	`); err != nil {
+		t.Fatalf("create domain indexes: %v", err)
+	}
 
 	if _, err := db.Exec(`
 		CREATE TABLE server_keys (
