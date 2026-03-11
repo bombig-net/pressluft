@@ -47,6 +47,58 @@ func TestSiteStoreCreateListAndGet(t *testing.T) {
 	}
 }
 
+func TestSiteStoreCreateWithSandboxPrimaryDomain(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "pressluft.dev",
+		Kind:      DomainKindBase,
+		Ownership: DomainOwnershipPlatform,
+		Source:    DomainSourceSandbox,
+		Status:    DomainStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create sandbox domain: %v", err)
+	}
+
+	siteID, err := store.Create(context.Background(), CreateSiteInput{
+		ServerID: serverID,
+		Name:     "Agency Brochure",
+		PrimaryDomainConfig: &CreateSitePrimaryDomainInput{
+			Mode:           "sandbox",
+			Label:          "Northwind Live",
+			ParentDomainID: baseID,
+		},
+		Status: SiteStatusDraft,
+	})
+	if err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+
+	site, err := store.GetByID(context.Background(), siteID)
+	if err != nil {
+		t.Fatalf("get site: %v", err)
+	}
+	if site.PrimaryDomain != "northwind-live.pressluft.dev" {
+		t.Fatalf("primary_domain = %q, want %q", site.PrimaryDomain, "northwind-live.pressluft.dev")
+	}
+	domains, err := domainStore.ListBySite(context.Background(), siteID)
+	if err != nil {
+		t.Fatalf("list site domains: %v", err)
+	}
+	if len(domains) != 1 {
+		t.Fatalf("site domains = %d, want 1", len(domains))
+	}
+	if domains[0].ParentDomainID != baseID {
+		t.Fatalf("parent_domain_id = %q, want %q", domains[0].ParentDomainID, baseID)
+	}
+	if domains[0].Source != DomainSourceSandbox {
+		t.Fatalf("source = %q, want %q", domains[0].Source, DomainSourceSandbox)
+	}
+}
+
 func TestSiteStoreListByServer(t *testing.T) {
 	db := mustOpenTestDB(t)
 	store := NewSiteStore(db)

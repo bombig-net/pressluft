@@ -121,11 +121,27 @@ func (s *DomainStore) BackfillLegacyPrimaryDomains(ctx context.Context) error {
 }
 
 func (s *DomainStore) Create(ctx context.Context, in CreateDomainInput) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin create domain tx: %w", err)
+	}
+	defer tx.Rollback()
+	id, err := s.createTx(ctx, tx, in)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit create domain tx: %w", err)
+	}
+	return id, nil
+}
+
+func (s *DomainStore) createTx(ctx context.Context, tx *sql.Tx, in CreateDomainInput) (string, error) {
 	prepared, err := prepareCreateDomainInput(in)
 	if err != nil {
 		return "", err
 	}
-	if err := s.ensureRelations(ctx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
+	if err := s.ensureRelationsTx(ctx, tx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
 		return "", err
 	}
 	publicID, err := idutil.New()
@@ -133,11 +149,6 @@ func (s *DomainStore) Create(ctx context.Context, in CreateDomainInput) (string,
 		return "", err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("begin create domain tx: %w", err)
-	}
-	defer tx.Rollback()
 
 	isPrimary := prepared.IsPrimary
 	if prepared.SiteID != "" && !isPrimary {
@@ -176,9 +187,6 @@ func (s *DomainStore) Create(ctx context.Context, in CreateDomainInput) (string,
 	}
 	if err := syncLegacySitePrimaryDomainTx(ctx, tx, prepared.SiteID); err != nil {
 		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit create domain tx: %w", err)
 	}
 	return publicID, nil
 }
@@ -511,13 +519,17 @@ func prepareUpdateDomainInput(current StoredDomain, in UpdateDomainInput) (Creat
 }
 
 func (s *DomainStore) ensureRelations(ctx context.Context, kind, siteID, parentDomainID string) error {
+	return s.ensureRelationsTx(ctx, nil, kind, siteID, parentDomainID)
+}
+
+func (s *DomainStore) ensureRelationsTx(ctx context.Context, tx *sql.Tx, kind, siteID, parentDomainID string) error {
 	if siteID != "" {
-		if err := ensureSiteExists(ctx, s.db, siteID); err != nil {
+		if err := ensureSiteExists(ctx, s.db, tx, siteID); err != nil {
 			return err
 		}
 	}
 	if parentDomainID != "" {
-		parent, err := s.GetByID(ctx, parentDomainID)
+		parent, err := s.getByIDTx(ctx, tx, parentDomainID)
 		if err != nil {
 			return fmt.Errorf("parent_domain_id: %w", err)
 		}
@@ -529,6 +541,33 @@ func (s *DomainStore) ensureRelations(ctx context.Context, kind, siteID, parentD
 		return fmt.Errorf("base domains cannot have a parent_domain_id")
 	}
 	return nil
+}
+
+func (s *DomainStore) getByIDTx(ctx context.Context, tx *sql.Tx, id string) (*StoredDomain, error) {
+	publicID, err := idutil.Normalize(id)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		rows *sql.Rows
+	)
+	if tx != nil {
+		rows, err = tx.QueryContext(ctx, domainSelectQuery+` WHERE d.id = ?`, publicID)
+	} else {
+		rows, err = s.db.QueryContext(ctx, domainSelectQuery+` WHERE d.id = ?`, publicID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get domain: %w", err)
+	}
+	defer rows.Close()
+	domains, err := scanDomains(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("domain %s not found", publicID)
+	}
+	return &domains[0], nil
 }
 
 func normalizeHostname(raw string) (string, error) {
@@ -583,9 +622,15 @@ func normalizeDomainStatus(raw string) (string, error) {
 	}
 }
 
-func ensureSiteExists(ctx context.Context, db *sql.DB, siteID string) error {
+func ensureSiteExists(ctx context.Context, db *sql.DB, tx *sql.Tx, siteID string) error {
 	var exists string
-	if err := db.QueryRowContext(ctx, `SELECT id FROM sites WHERE id = ?`, siteID).Scan(&exists); err != nil {
+	var err error
+	if tx != nil {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM sites WHERE id = ?`, siteID).Scan(&exists)
+	} else {
+		err = db.QueryRowContext(ctx, `SELECT id FROM sites WHERE id = ?`, siteID).Scan(&exists)
+	}
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("site %s not found", siteID)
 		}

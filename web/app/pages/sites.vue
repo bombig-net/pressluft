@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDomains } from "~/composables/useDomains";
 import { useServers } from "~/composables/useServers";
 import { useSites, type StoredSite } from "~/composables/useSites";
 
 const route = useRoute();
 
 const { servers, fetchServers } = useServers();
+const { domains, fetchDomains } = useDomains();
 const { sites, loading, saving, error, fetchSites, createSite } = useSites();
 
 const pageError = ref("");
@@ -23,6 +25,10 @@ const form = reactive({
   wordpressPath: "/srv/www/",
   phpVersion: "8.3",
   wordpressVersion: "6.8",
+  domainMode: "sandbox",
+  customerDomain: "",
+  sandboxLabel: "",
+  sandboxParentDomainId: "",
 });
 
 const siteStatusMeta = (status: StoredSite["status"]) => {
@@ -64,6 +70,39 @@ const serverOptions = computed(() =>
   [...servers.value].sort((a, b) => a.name.localeCompare(b.name)),
 );
 
+const sandboxDomains = computed(() =>
+  domains.value.filter((domain) => domain.kind === "base"),
+);
+
+const hasMultipleSandboxDomains = computed(() => sandboxDomains.value.length > 1);
+
+const selectedSandboxDomain = computed(() =>
+  sandboxDomains.value.find((domain) => domain.id === form.sandboxParentDomainId) || null,
+);
+
+const buildSandboxPrimaryDomain = () => {
+  const label = form.sandboxLabel
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!label || !selectedSandboxDomain.value) {
+    return "";
+  }
+  return `${label}.${selectedSandboxDomain.value.hostname}`;
+};
+
+const canCreateSite = computed(() => {
+  if (!form.serverId || !form.name.trim()) {
+    return false;
+  }
+  if (form.domainMode === "sandbox") {
+    return Boolean(buildSandboxPrimaryDomain() && form.sandboxParentDomainId);
+  }
+  return Boolean(form.customerDomain.trim());
+});
+
 const selectedServerName = computed(
   () =>
     serverOptions.value.find((server) => server.id === form.serverId)?.name ||
@@ -73,13 +112,19 @@ const selectedServerName = computed(
 const loadPage = async () => {
   pageError.value = "";
   try {
-    await Promise.all([fetchServers(), fetchSites()]);
+    await Promise.all([fetchServers(), fetchSites(), fetchDomains()]);
     const requestedServer = route.query.serverId;
     if (typeof requestedServer === "string" && requestedServer.trim()) {
       form.serverId = requestedServer.trim();
     }
     if (!form.serverId && serverOptions.value[0]) {
       form.serverId = serverOptions.value[0].id;
+    }
+    if (!form.sandboxParentDomainId && sandboxDomains.value[0]) {
+      form.sandboxParentDomainId = sandboxDomains.value[0].id;
+    }
+    if (!sandboxDomains.value.length) {
+      form.domainMode = "customer";
     }
   } catch (e: any) {
     pageError.value = e.message || "Failed to load sites";
@@ -92,6 +137,10 @@ const resetForm = () => {
   form.wordpressPath = "/srv/www/";
   form.phpVersion = "8.3";
   form.wordpressVersion = "6.8";
+  form.customerDomain = "";
+  form.sandboxLabel = "";
+  form.domainMode = sandboxDomains.value.length ? "sandbox" : "customer";
+  form.sandboxParentDomainId = sandboxDomains.value[0]?.id || "";
 };
 
 const handleCreateSite = async () => {
@@ -105,8 +154,19 @@ const handleCreateSite = async () => {
       wordpress_path: form.wordpressPath || undefined,
       php_version: form.phpVersion || undefined,
       wordpress_version: form.wordpressVersion || undefined,
+      primary_domain_config:
+        form.domainMode === "sandbox"
+          ? {
+              mode: "sandbox",
+              label: form.sandboxLabel,
+              parent_domain_id: form.sandboxParentDomainId,
+            }
+          : {
+              mode: "customer",
+              hostname: form.customerDomain,
+            },
     });
-    successMessage.value = `Created ${created.name} on ${created.server_name}.`;
+    successMessage.value = `Created ${created.name} on ${created.server_name} with ${created.primary_domain}.`;
     resetForm();
     await fetchSites();
   } catch (e: any) {
@@ -136,6 +196,19 @@ watch(
     }
   },
 );
+
+watch(sandboxDomains, (value) => {
+  if (!value.length) {
+    form.sandboxParentDomainId = "";
+    if (form.domainMode === "sandbox") {
+      form.domainMode = "customer";
+    }
+    return;
+  }
+  if (!value.some((domain) => domain.id === form.sandboxParentDomainId)) {
+    form.sandboxParentDomainId = value[0].id;
+  }
+});
 </script>
 
 <template>
@@ -155,8 +228,8 @@ watch(
             </h1>
             <p class="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
               Track every client site as a first-class resource, attach it to its
-              current server, and build a believable hosting panel surface before
-              deployment automation lands.
+              current server, and decide from day one whether it starts on a
+              temporary Pressluft URL or the client's own domain.
             </p>
           </div>
         </div>
@@ -281,10 +354,10 @@ watch(
           <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             New Site
           </p>
-          <h2 class="mt-1 text-xl font-semibold text-foreground">Create a believable site record</h2>
+          <h2 class="mt-1 text-xl font-semibold text-foreground">Create a site with its primary domain</h2>
           <p class="mt-2 text-sm leading-6 text-muted-foreground">
-            Capture where the site currently lives, what stack it expects, and
-            enough metadata to make the panel feel operational.
+            Capture the hosting record and decide what address the site should
+            open on first.
           </p>
         </CardHeader>
         <CardContent class="px-6 py-5">
@@ -335,18 +408,59 @@ watch(
               </div>
             </div>
 
-            <div class="rounded-2xl border border-border/60 bg-muted/25 p-4">
+            <div class="space-y-4 rounded-2xl border border-border/60 bg-muted/25 p-4">
               <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Why this matters
+                Primary Domain
               </p>
-              <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                Site creation now captures the workload first. Hostnames live in
-                the dedicated domains surface and can be assigned after the site
-                record exists.
+              <div class="flex flex-wrap gap-2">
+                <Button type="button" size="sm" :variant="form.domainMode === 'sandbox' ? 'default' : 'outline'" @click="form.domainMode = 'sandbox'" :disabled="sandboxDomains.length === 0">
+                  Temporary Pressluft URL
+                </Button>
+                <Button type="button" size="sm" :variant="form.domainMode === 'customer' ? 'default' : 'outline'" @click="form.domainMode = 'customer'">
+                  Client domain
+                </Button>
+              </div>
+
+              <div v-if="form.domainMode === 'sandbox'" class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1.5">
+                  <Label for="site-sandbox-label" class="text-sm font-medium text-muted-foreground">Pressluft URL label</Label>
+                  <Input id="site-sandbox-label" v-model="form.sandboxLabel" placeholder="northwind-live" />
+                </div>
+                <div v-if="hasMultipleSandboxDomains" class="space-y-1.5">
+                  <Label for="site-sandbox-domain" class="text-sm font-medium text-muted-foreground">Available on</Label>
+                  <select
+                    id="site-sandbox-domain"
+                    v-model="form.sandboxParentDomainId"
+                    class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
+                  >
+                    <option v-for="domain in sandboxDomains" :key="domain.id" :value="domain.id">
+                      {{ domain.hostname }}
+                    </option>
+                  </select>
+                </div>
+                <div class="space-y-1.5 sm:col-span-2">
+                  <Label class="text-sm font-medium text-muted-foreground">Result</Label>
+                  <Input :model-value="buildSandboxPrimaryDomain()" readonly placeholder="Enter a label to preview the temporary URL" />
+                </div>
+                <p v-if="sandboxDomains.length === 0" class="sm:col-span-2 text-sm text-muted-foreground">
+                  No Pressluft URL domains are available right now, so start with a client domain instead.
+                </p>
+                <p v-else class="sm:col-span-2 text-sm text-muted-foreground">
+                  Pressluft URL domains are preinstalled by the platform. You only choose the label that becomes part of the temporary address.
+                </p>
+              </div>
+
+              <div v-else class="space-y-1.5">
+                <Label for="site-customer-domain" class="text-sm font-medium text-muted-foreground">Client domain</Label>
+                <Input id="site-customer-domain" v-model="form.customerDomain" placeholder="www.client-example.com" />
+              </div>
+
+              <p class="text-sm leading-6 text-muted-foreground">
+                Client domains stay visible in Domains, while temporary Pressluft URLs use the platform-provided roots behind the scenes.
               </p>
             </div>
 
-            <Button type="submit" class="w-full rounded-xl bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !form.serverId || !form.name.trim()">
+            <Button type="submit" class="w-full rounded-xl bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !canCreateSite">
               {{ saving ? "Creating site..." : "Create site record" }}
             </Button>
           </form>

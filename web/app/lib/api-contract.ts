@@ -104,6 +104,7 @@ export interface CreateSiteRequest {
   server_id: string
   name: string
   primary_domain?: string
+  primary_domain_config?: { mode: string; hostname?: string; label?: string; parent_domain_id?: string }
   status?: string
   wordpress_path?: string
   php_version?: string

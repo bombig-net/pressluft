@@ -113,6 +113,7 @@ const loadActivity = async () => {
 };
 
 const availableBaseDomains = ref<StoredDomain[]>([]);
+const hasMultipleBaseDomains = computed(() => availableBaseDomains.value.length > 1);
 
 const refreshDomains = async () => {
   if (!siteId.value) return;
@@ -266,9 +267,8 @@ watch(siteId, async (value, previous) => {
               </Badge>
             </div>
             <p class="mt-3 max-w-2xl text-base leading-7 text-white/72">
-              {{ site.primary_domain || "No primary hostname assigned yet." }}
-              This record lives on {{ site.server_name }} and keeps the hosting
-              panel grounded in real site inventory.
+              {{ site.primary_domain || "No primary domain assigned yet." }}
+              This site lives on {{ site.server_name }} and keeps every client domain or temporary Pressluft URL visible as its own record.
             </p>
           </div>
 
@@ -351,12 +351,12 @@ watch(siteId, async (value, previous) => {
         <div class="space-y-6">
           <Card class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
             <CardHeader class="border-b border-border/50 px-6 py-5">
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Hostnames</p>
-              <h2 class="mt-1 text-xl font-semibold text-foreground">Domain assignment</h2>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Domains</p>
+              <h2 class="mt-1 text-xl font-semibold text-foreground">Primary and additional domains</h2>
             </CardHeader>
             <CardContent class="space-y-4 px-6 py-5">
               <div v-if="siteDomains.length === 0" class="rounded-2xl border border-dashed border-border/60 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-                No hostnames assigned yet.
+                No domains assigned yet.
               </div>
               <div v-else class="space-y-3">
                 <div v-for="domain in siteDomains" :key="domain.id" class="rounded-2xl border border-border/60 bg-background/70 p-4">
@@ -365,10 +365,10 @@ watch(siteId, async (value, previous) => {
                       <div class="flex flex-wrap items-center gap-2">
                         <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
                         <Badge v-if="domain.is_primary" variant="outline" class="border-primary/30 bg-primary/10 text-primary">Primary</Badge>
-                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.source }}</Badge>
+                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.parent_domain_id || domain.ownership === 'platform' ? 'Temporary URL' : 'Client domain' }}</Badge>
                       </div>
                       <p class="mt-1 text-xs text-muted-foreground">
-                        {{ domain.parent_hostname || (domain.ownership === "platform" ? "Platform-managed hostname" : "Customer-owned hostname") }}
+                        {{ domain.parent_hostname || (domain.ownership === "platform" ? "Provided by Pressluft" : "Managed by the agency") }}
                       </p>
                     </div>
                     <div class="flex gap-2">
@@ -383,23 +383,26 @@ watch(siteId, async (value, previous) => {
                 </div>
               </div>
 
-              <div class="rounded-2xl border border-border/60 bg-muted/20 p-4">
-                <div class="flex gap-2">
-                  <Button type="button" size="sm" :variant="hostnameForm.mode === 'sandbox' ? 'default' : 'outline'" @click="hostnameForm.mode = 'sandbox'">
-                    Sandbox domain
-                  </Button>
-                  <Button type="button" size="sm" :variant="hostnameForm.mode === 'custom' ? 'default' : 'outline'" @click="hostnameForm.mode = 'custom'">
-                    Custom-ready hostname
-                  </Button>
-                </div>
+                <div class="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                  <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Attach Domain
+                  </p>
+                  <div class="flex gap-2">
+                    <Button type="button" size="sm" :variant="hostnameForm.mode === 'sandbox' ? 'default' : 'outline'" @click="hostnameForm.mode = 'sandbox'" :disabled="availableBaseDomains.length === 0">
+                      Temporary Pressluft URL
+                    </Button>
+                    <Button type="button" size="sm" :variant="hostnameForm.mode === 'custom' ? 'default' : 'outline'" @click="hostnameForm.mode = 'custom'">
+                      Client domain
+                    </Button>
+                  </div>
                 <div class="mt-4 grid gap-4 sm:grid-cols-2">
                   <template v-if="hostnameForm.mode === 'sandbox'">
                     <div class="space-y-1.5">
-                      <Label class="text-sm font-medium text-muted-foreground">Subdomain label</Label>
+                      <Label class="text-sm font-medium text-muted-foreground">Pressluft URL label</Label>
                       <Input v-model="hostnameForm.label" placeholder="northwind-live" />
                     </div>
-                    <div class="space-y-1.5">
-                      <Label class="text-sm font-medium text-muted-foreground">Base domain</Label>
+                    <div v-if="hasMultipleBaseDomains" class="space-y-1.5">
+                      <Label class="text-sm font-medium text-muted-foreground">Available on</Label>
                       <select v-model="hostnameForm.baseDomainId" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
                         <option v-for="domain in availableBaseDomains" :key="domain.id" :value="domain.id">
                           {{ domain.hostname }}
@@ -408,18 +411,24 @@ watch(siteId, async (value, previous) => {
                     </div>
                     <div class="space-y-1.5 sm:col-span-2">
                       <Label class="text-sm font-medium text-muted-foreground">Result</Label>
-                      <Input :model-value="buildSandboxHostname()" readonly placeholder="Choose a base domain first" />
+                      <Input :model-value="buildSandboxHostname()" readonly placeholder="Enter a label to preview the temporary URL" />
                     </div>
+                    <p class="sm:col-span-2 text-sm text-muted-foreground">
+                      Pressluft URL domains are provided by the platform. You only choose the label for this site.
+                    </p>
+                    <p v-if="availableBaseDomains.length === 0" class="sm:col-span-2 text-sm text-muted-foreground">
+                      No Pressluft URL domains are available right now, so attach a client domain instead.
+                    </p>
                   </template>
                   <template v-else>
                     <div class="space-y-1.5 sm:col-span-2">
-                      <Label class="text-sm font-medium text-muted-foreground">Hostname</Label>
+                      <Label class="text-sm font-medium text-muted-foreground">Client domain</Label>
                       <Input v-model="hostnameForm.hostname" placeholder="www.client-example.com" />
                     </div>
                   </template>
                 </div>
                 <Button type="button" class="mt-4 bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || (hostnameForm.mode === 'sandbox' ? !buildSandboxHostname() : !hostnameForm.hostname.trim())" @click="handleAssignHostname">
-                  Assign hostname
+                  Add domain
                 </Button>
               </div>
             </CardContent>

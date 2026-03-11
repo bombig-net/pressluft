@@ -173,3 +173,47 @@ func TestSitesEndpointsValidationAndNotFound(t *testing.T) {
 		t.Fatalf("get status = %d, want %d", notFoundRes.Code, http.StatusNotFound)
 	}
 }
+
+func TestSitesCreateWithSandboxPrimaryDomainConfig(t *testing.T) {
+	db := mustOpenServerHandlerDB(t)
+	_, providerDBID := mustInsertProviderRecord(t, db, "test-server-provider", "agency", "token-ok")
+	serverID := mustInsertServerRecord(t, db, providerDBID, "ready")
+	domainStore := NewDomainStore(db)
+	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "pressluft.dev",
+		Kind:      DomainKindBase,
+		Ownership: DomainOwnershipPlatform,
+		Source:    DomainSourceSandbox,
+		Status:    DomainStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create sandbox domain: %v", err)
+	}
+	handler := NewHandler(db)
+
+	body := map[string]any{
+		"server_id": serverID,
+		"name":      "Sandbox Site",
+		"status":    "draft",
+		"primary_domain_config": map[string]any{
+			"mode":             "sandbox",
+			"label":            "client preview",
+			"parent_domain_id": baseID,
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+	var created map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created["primary_domain"] != "client-preview.pressluft.dev" {
+		t.Fatalf("primary_domain = %v, want %q", created["primary_domain"], "client-preview.pressluft.dev")
+	}
+}

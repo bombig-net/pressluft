@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,13 +33,21 @@ type StoredSite struct {
 }
 
 type CreateSiteInput struct {
-	ServerID         string
-	Name             string
-	PrimaryDomain    string
-	Status           string
-	WordPressPath    string
-	PHPVersion       string
-	WordPressVersion string
+	ServerID            string
+	Name                string
+	PrimaryDomain       string
+	PrimaryDomainConfig *CreateSitePrimaryDomainInput
+	Status              string
+	WordPressPath       string
+	PHPVersion          string
+	WordPressVersion    string
+}
+
+type CreateSitePrimaryDomainInput struct {
+	Mode           string
+	Hostname       string
+	Label          string
+	ParentDomainID string
 }
 
 type UpdateSiteInput struct {
@@ -89,7 +98,12 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 	if err != nil {
 		return "", err
 	}
-	_, err = s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin create site tx: %w", err)
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO sites (id, server_id, name, primary_domain, status, wordpress_path, php_version, wordpress_version, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		publicID,
@@ -106,18 +120,13 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 	if err != nil {
 		return "", fmt.Errorf("insert site: %w", err)
 	}
-	if strings.TrimSpace(in.PrimaryDomain) != "" {
-		if _, err := NewDomainStore(s.db).Create(ctx, CreateDomainInput{
-			Hostname:  in.PrimaryDomain,
-			Kind:      DomainKindHostname,
-			Ownership: DomainOwnershipCustomer,
-			Source:    DomainSourceManual,
-			Status:    DomainStatusActive,
-			SiteID:    publicID,
-			IsPrimary: true,
-		}); err != nil {
+	if input, ok := resolveCreateSitePrimaryDomainInput(in); ok {
+		if _, err := NewDomainStore(s.db).createWithTx(ctx, tx, publicID, input); err != nil {
 			return "", err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit create site tx: %w", err)
 	}
 	return publicID, nil
 }
@@ -314,8 +323,16 @@ func validateCreateSiteInput(in CreateSiteInput) error {
 	if strings.TrimSpace(in.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
+	if strings.TrimSpace(in.PrimaryDomain) != "" && in.PrimaryDomainConfig != nil {
+		return fmt.Errorf("use either primary_domain or primary_domain_config, not both")
+	}
 	if strings.TrimSpace(in.PrimaryDomain) != "" {
 		if _, err := normalizeHostname(in.PrimaryDomain); err != nil {
+			return err
+		}
+	}
+	if in.PrimaryDomainConfig != nil {
+		if err := validateCreateSitePrimaryDomainInput(*in.PrimaryDomainConfig); err != nil {
 			return err
 		}
 	}
@@ -323,6 +340,114 @@ func validateCreateSiteInput(in CreateSiteInput) error {
 		return err
 	}
 	return nil
+}
+
+func validateCreateSitePrimaryDomainInput(in CreateSitePrimaryDomainInput) error {
+	mode := strings.TrimSpace(in.Mode)
+	switch mode {
+	case "sandbox":
+		if strings.TrimSpace(in.Label) == "" {
+			return fmt.Errorf("primary_domain_config.label is required for sandbox domains")
+		}
+		if strings.TrimSpace(in.ParentDomainID) == "" {
+			return fmt.Errorf("primary_domain_config.parent_domain_id is required for sandbox domains")
+		}
+		if _, err := normalizeSandboxLabel(strings.TrimSpace(in.Label)); err != nil {
+			return err
+		}
+		return nil
+	case "customer":
+		if _, err := normalizeHostname(strings.TrimSpace(in.Hostname)); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("primary_domain_config.mode must be sandbox or customer")
+	}
+	return nil
+}
+
+func resolveCreateSitePrimaryDomainInput(in CreateSiteInput) (CreateSitePrimaryDomainInput, bool) {
+	if in.PrimaryDomainConfig != nil {
+		return *in.PrimaryDomainConfig, true
+	}
+	if strings.TrimSpace(in.PrimaryDomain) == "" {
+		return CreateSitePrimaryDomainInput{}, false
+	}
+	return CreateSitePrimaryDomainInput{
+		Mode:     "customer",
+		Hostname: strings.TrimSpace(in.PrimaryDomain),
+	}, true
+}
+
+func (s *DomainStore) createWithTx(ctx context.Context, tx *sql.Tx, siteID string, input CreateSitePrimaryDomainInput) (string, error) {
+	mode := strings.TrimSpace(input.Mode)
+	switch mode {
+	case "sandbox":
+		hostname, err := buildSandboxHostname(ctx, tx, strings.TrimSpace(input.Label), strings.TrimSpace(input.ParentDomainID), s)
+		if err != nil {
+			return "", err
+		}
+		return s.createTx(ctx, tx, CreateDomainInput{
+			Hostname:       hostname,
+			Kind:           DomainKindHostname,
+			Ownership:      DomainOwnershipPlatform,
+			Source:         DomainSourceSandbox,
+			Status:         DomainStatusActive,
+			SiteID:         siteID,
+			ParentDomainID: strings.TrimSpace(input.ParentDomainID),
+			IsPrimary:      true,
+		})
+	case "customer":
+		return s.createTx(ctx, tx, CreateDomainInput{
+			Hostname:  strings.TrimSpace(input.Hostname),
+			Kind:      DomainKindHostname,
+			Ownership: DomainOwnershipCustomer,
+			Source:    DomainSourceCustom,
+			Status:    DomainStatusActive,
+			SiteID:    siteID,
+			IsPrimary: true,
+		})
+	default:
+		return "", fmt.Errorf("primary_domain_config.mode must be sandbox or customer")
+	}
+}
+
+func buildSandboxHostname(ctx context.Context, tx *sql.Tx, label, parentDomainID string, domainStore *DomainStore) (string, error) {
+	normalizedLabel, err := normalizeSandboxLabel(label)
+	if err != nil {
+		return "", err
+	}
+	if parentDomainID == "" {
+		return "", fmt.Errorf("primary_domain_config.parent_domain_id is required for sandbox domains")
+	}
+	if domainStore == nil {
+		return "", nil
+	}
+	parent, err := domainStore.getByIDTx(ctx, tx, parentDomainID)
+	if err != nil {
+		return "", fmt.Errorf("primary_domain_config.parent_domain_id: %w", err)
+	}
+	if parent.Kind != DomainKindBase {
+		return "", fmt.Errorf("primary_domain_config.parent_domain_id must reference a sandbox domain")
+	}
+	return normalizeHostname(normalizedLabel + "." + parent.Hostname)
+}
+
+func normalizeSandboxLabel(label string) (string, error) {
+	label = strings.ToLower(strings.TrimSpace(label))
+	label = strings.ReplaceAll(label, "_", "-")
+	label = regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(label, "-")
+	label = strings.Trim(label, "-")
+	if label == "" {
+		return "", fmt.Errorf("primary_domain_config.label is required for sandbox domains")
+	}
+	if strings.Contains(label, ".") {
+		return "", fmt.Errorf("primary_domain_config.label must be a single subdomain label")
+	}
+	if len(label) > 63 {
+		return "", fmt.Errorf("primary_domain_config.label must be 63 characters or fewer")
+	}
+	return label, nil
 }
 
 func validateUpdateSiteInput(in UpdateSiteInput) error {
