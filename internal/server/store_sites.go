@@ -295,7 +295,7 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 				return nil, err
 			}
 		} else {
-			if err := domainStore.setPrimaryHostnameForSiteTx(ctx, tx, publicID, primaryDomain, DomainSourceManual, DomainOwnershipCustomer); err != nil {
+			if err := domainStore.setPrimaryHostnameForSiteTx(ctx, tx, publicID, primaryDomain, DomainOwnershipCustomer); err != nil {
 				return nil, err
 			}
 		}
@@ -405,9 +405,8 @@ func (s *DomainStore) createWithTx(ctx context.Context, tx *sql.Tx, siteID strin
 		}
 		return s.createTx(ctx, tx, CreateDomainInput{
 			Hostname:       hostname,
-			Kind:           DomainKindHostname,
+			Kind:           DomainKindDirect,
 			Ownership:      DomainOwnershipPlatform,
-			Source:         DomainSourceSandbox,
 			Status:         DomainStatusActive,
 			SiteID:         siteID,
 			ParentDomainID: strings.TrimSpace(input.ParentDomainID),
@@ -416,9 +415,8 @@ func (s *DomainStore) createWithTx(ctx context.Context, tx *sql.Tx, siteID strin
 	case "customer":
 		return s.createTx(ctx, tx, CreateDomainInput{
 			Hostname:  strings.TrimSpace(input.Hostname),
-			Kind:      DomainKindHostname,
+			Kind:      DomainKindDirect,
 			Ownership: DomainOwnershipCustomer,
-			Source:    DomainSourceCustom,
 			Status:    DomainStatusActive,
 			SiteID:    siteID,
 			IsPrimary: true,
@@ -443,7 +441,7 @@ func buildSandboxHostname(ctx context.Context, tx *sql.Tx, label, parentDomainID
 	if err != nil {
 		return "", fmt.Errorf("primary_domain_config.parent_domain_id: %w", err)
 	}
-	if parent.Kind != DomainKindBase {
+	if parent.Kind != DomainKindWildcard {
 		return "", fmt.Errorf("primary_domain_config.parent_domain_id must reference a sandbox domain")
 	}
 	if parent.Status != DomainStatusActive {

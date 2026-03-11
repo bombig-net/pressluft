@@ -122,7 +122,9 @@ const refreshDomains = async () => {
     fetchDomains(),
     fetchSiteDomains(siteId.value),
   ]);
-  allBaseDomains.value = allDomains.filter((domain) => domain.kind === "base");
+  allBaseDomains.value = allDomains.filter(
+    (domain) => domain.kind === "wildcard" && domain.ownership === "platform",
+  );
   availableBaseDomains.value = allBaseDomains.value.filter((domain) => domain.status === "active");
   siteDomains.value = assignedDomains;
   if (!hostnameForm.baseDomainId && availableBaseDomains.value[0]) {
@@ -371,7 +373,7 @@ watch(siteId, async (value, previous) => {
                       <div class="flex flex-wrap items-center gap-2">
                         <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
                         <Badge v-if="domain.is_primary" variant="outline" class="border-primary/30 bg-primary/10 text-primary">Primary</Badge>
-                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.parent_domain_id || domain.ownership === 'platform' ? 'Temporary URL' : 'Domain' }}</Badge>
+                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.parent_domain_id && domain.ownership === 'platform' ? 'Temporary URL' : 'Domain' }}</Badge>
                       </div>
                       <p class="mt-1 text-xs text-muted-foreground">
                         {{ domain.parent_hostname || (domain.ownership === "platform" ? "Provided by Pressluft" : "Managed by the agency") }}

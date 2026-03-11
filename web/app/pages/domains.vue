@@ -22,6 +22,7 @@ const successMessage = ref("");
 
 const form = reactive({
   hostname: "",
+  isWildcard: false,
 });
 
 const allDomains = computed(() => domains.value);
@@ -33,17 +34,20 @@ const domainStats = computed(() => ({
 }));
 
 const domainKindLabel = (domain: (typeof allDomains.value)[number]) => {
-  if (domain.kind === "base") {
-    return "Temporary URL root";
+  if (domain.kind === "wildcard") {
+    return domain.ownership === "platform" ? "Temporary URL root" : "Wildcard domain";
   }
-  if (domain.parent_domain_id || domain.ownership === "platform") {
-    return "Temporary URL";
+  if (domain.parent_domain_id) {
+    return domain.ownership === "platform" ? "Temporary URL" : "Subdomain";
   }
   return "Domain";
 };
 
 const domainRoleLabel = (domain: (typeof allDomains.value)[number]) => {
-  if (domain.kind === "base") {
+  if (domain.kind === "wildcard") {
+    if (domain.ownership !== "platform") {
+      return "Wildcard";
+    }
     return domain.status === "active" ? "Active" : "Coming soon";
   }
   return domain.is_primary ? "Primary" : "Additional";
@@ -63,13 +67,17 @@ const loadPage = async () => {
 
 const resetForm = () => {
   form.hostname = "";
+  form.isWildcard = false;
 };
 
 const handleCreateDomain = async () => {
   pageError.value = "";
   successMessage.value = "";
   try {
-    const created = await createDomain({ hostname: form.hostname });
+    const created = await createDomain({
+      hostname: form.hostname,
+      kind: form.isWildcard ? "wildcard" : "direct",
+    });
     successMessage.value = `Added ${created.hostname}.`;
     resetForm();
     await fetchDomains();
@@ -156,6 +164,12 @@ onMounted(loadPage);
             <div class="rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-6 text-muted-foreground">
               New domains land here as inventory first. Site assignment happens from the site record, and Pressluft-provided temporary URL roots appear in the same list automatically.
             </div>
+            <label class="flex items-start gap-3 rounded-2xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
+              <input v-model="form.isWildcard" type="checkbox" class="mt-1 h-4 w-4 rounded border-border text-accent focus:ring-accent" />
+              <span>
+                Store this as a wildcard domain base. Pressluft will treat it as a parent domain for future subdomains, without enabling any DNS or TLS workflow yet.
+              </span>
+            </label>
             <Button type="submit" class="w-full bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !form.hostname.trim()">
               {{ saving ? "Adding domain..." : "Add domain" }}
             </Button>
@@ -185,9 +199,9 @@ onMounted(loadPage);
                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domainOwnershipLabel(domain) }}</Badge>
                      </div>
                      <p class="mt-1 text-xs text-muted-foreground">
-                       {{ domain.kind === "base" ? "Available for temporary Pressluft URLs" : domain.site_name ? `Attached to ${domain.site_name}` : "Unassigned" }}
-                       <span v-if="domain.parent_hostname"> · via {{ domain.parent_hostname }}</span>
-                     </p>
+                        {{ domain.kind === "wildcard" ? (domain.ownership === "platform" ? "Available for temporary Pressluft URLs" : "Reserved as a wildcard parent domain") : domain.site_name ? `Attached to ${domain.site_name}` : "Unassigned" }}
+                        <span v-if="domain.parent_hostname"> · via {{ domain.parent_hostname }}</span>
+                      </p>
                    </div>
                     <div class="flex items-center gap-3 text-xs text-muted-foreground">
                        <NuxtLink v-if="domain.site_id" :to="`/sites/${domain.site_id}`" class="font-medium text-accent transition hover:text-accent/80">

@@ -379,7 +379,6 @@ func mustOpenServerHandlerDB(t *testing.T) *sql.DB {
 			hostname         TEXT    NOT NULL,
 			kind             TEXT    NOT NULL,
 			ownership        TEXT    NOT NULL,
-			source           TEXT    NOT NULL,
 			status           TEXT    NOT NULL DEFAULT 'active',
 			site_id          TEXT,
 			parent_domain_id TEXT,

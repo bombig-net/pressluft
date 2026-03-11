@@ -71,11 +71,11 @@ const serverOptions = computed(() =>
 );
 
 const sandboxDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "base" && domain.status === "active"),
+  domains.value.filter((domain) => domain.kind === "wildcard" && domain.ownership === "platform" && domain.status === "active"),
 );
 
 const futureSandboxDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "base" && domain.status !== "active"),
+  domains.value.filter((domain) => domain.kind === "wildcard" && domain.ownership === "platform" && domain.status !== "active"),
 );
 
 const hasMultipleSandboxDomains = computed(() => sandboxDomains.value.length > 1);

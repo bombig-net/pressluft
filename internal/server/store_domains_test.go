@@ -19,9 +19,8 @@ func TestDomainStoreCreateListAndPrimaryAssignment(t *testing.T) {
 	}
 	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "sandbox.pressluft.test",
-		Kind:      DomainKindBase,
+		Kind:      DomainKindWildcard,
 		Ownership: DomainOwnershipPlatform,
-		Source:    DomainSourceSandbox,
 		Status:    DomainStatusActive,
 	})
 	if err != nil {
@@ -29,9 +28,8 @@ func TestDomainStoreCreateListAndPrimaryAssignment(t *testing.T) {
 	}
 	firstID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:       "northwind.sandbox.pressluft.test",
-		Kind:           DomainKindHostname,
+		Kind:           DomainKindDirect,
 		Ownership:      DomainOwnershipPlatform,
-		Source:         DomainSourceSandbox,
 		Status:         DomainStatusActive,
 		SiteID:         siteID,
 		ParentDomainID: baseID,
@@ -42,9 +40,8 @@ func TestDomainStoreCreateListAndPrimaryAssignment(t *testing.T) {
 	}
 	secondID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "www.northwind.example.com",
-		Kind:      DomainKindHostname,
+		Kind:      DomainKindDirect,
 		Ownership: DomainOwnershipCustomer,
-		Source:    DomainSourceCustom,
 		Status:    DomainStatusActive,
 		SiteID:    siteID,
 		IsPrimary: true,
@@ -108,8 +105,11 @@ func TestDomainStoreBackfillsLegacyPrimaryDomains(t *testing.T) {
 	if len(domains) != 1 {
 		t.Fatalf("backfilled domain count = %d, want 1", len(domains))
 	}
-	if domains[0].Source != DomainSourceLegacy {
-		t.Fatalf("source = %q, want %q", domains[0].Source, DomainSourceLegacy)
+	if domains[0].Kind != DomainKindDirect {
+		t.Fatalf("kind = %q, want %q", domains[0].Kind, DomainKindDirect)
+	}
+	if domains[0].Ownership != DomainOwnershipCustomer {
+		t.Fatalf("ownership = %q, want %q", domains[0].Ownership, DomainOwnershipCustomer)
 	}
 	if !domains[0].IsPrimary {
 		t.Fatal("expected backfilled domain to be primary")
@@ -162,7 +162,7 @@ func TestDomainStoreSetPrimaryHostnameForSiteRejectsAttachedHostnameConflict(t *
 		t.Fatalf("create second site: %v", err)
 	}
 
-	err = domainStore.SetPrimaryHostnameForSite(context.Background(), siteTwoID, "one.example.test", DomainSourceManual, DomainOwnershipCustomer)
+	err = domainStore.SetPrimaryHostnameForSite(context.Background(), siteTwoID, "one.example.test", DomainOwnershipCustomer)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("set primary error = %v, want hostname conflict", err)
 	}
@@ -192,11 +192,11 @@ func TestDomainStoreDeletePromotesReplacementPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
-	primaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteID, IsPrimary: true})
+	primaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindDirect, Ownership: DomainOwnershipCustomer, Status: DomainStatusActive, SiteID: siteID, IsPrimary: true})
 	if err != nil {
 		t.Fatalf("create primary domain: %v", err)
 	}
-	secondaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteID})
+	secondaryID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindDirect, Ownership: DomainOwnershipCustomer, Status: DomainStatusActive, SiteID: siteID})
 	if err != nil {
 		t.Fatalf("create secondary domain: %v", err)
 	}
@@ -234,11 +234,11 @@ func TestDomainStoreMovingPrimaryPromotesReplacementOnPreviousSite(t *testing.T)
 	if err != nil {
 		t.Fatalf("create second site: %v", err)
 	}
-	movedID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteOneID, IsPrimary: true})
+	movedID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "primary.example.test", Kind: DomainKindDirect, Ownership: DomainOwnershipCustomer, Status: DomainStatusActive, SiteID: siteOneID, IsPrimary: true})
 	if err != nil {
 		t.Fatalf("create moved domain: %v", err)
 	}
-	replacementID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindHostname, Ownership: DomainOwnershipCustomer, Source: DomainSourceCustom, Status: DomainStatusActive, SiteID: siteOneID})
+	replacementID, err := domainStore.Create(context.Background(), CreateDomainInput{Hostname: "secondary.example.test", Kind: DomainKindDirect, Ownership: DomainOwnershipCustomer, Status: DomainStatusActive, SiteID: siteOneID})
 	if err != nil {
 		t.Fatalf("create replacement domain: %v", err)
 	}
@@ -269,5 +269,51 @@ func TestDomainStoreMovingPrimaryPromotesReplacementOnPreviousSite(t *testing.T)
 	}
 	if siteTwo.PrimaryDomain != "primary.example.test" {
 		t.Fatalf("second site primary_domain = %q, want %q", siteTwo.PrimaryDomain, "primary.example.test")
+	}
+}
+
+func TestDomainStoreRejectsDirectDomainOutsideWildcardParent(t *testing.T) {
+	db := mustOpenTestDB(t)
+	domainStore := NewDomainStore(db)
+
+	parentID, err := domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "example.test",
+		Kind:      DomainKindWildcard,
+		Ownership: DomainOwnershipCustomer,
+		Status:    DomainStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create wildcard domain: %v", err)
+	}
+
+	_, err = domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:       "outside.test",
+		Kind:           DomainKindDirect,
+		Ownership:      DomainOwnershipCustomer,
+		Status:         DomainStatusActive,
+		ParentDomainID: parentID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "within the parent wildcard domain") {
+		t.Fatalf("create error = %v, want wildcard parent validation failure", err)
+	}
+}
+
+func TestDomainStoreRejectsDeletingPlatformWildcardDomain(t *testing.T) {
+	db := mustOpenTestDB(t)
+	domainStore := NewDomainStore(db)
+
+	id, err := domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "pressluft.dev",
+		Kind:      DomainKindWildcard,
+		Ownership: DomainOwnershipPlatform,
+		Status:    DomainStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create platform wildcard domain: %v", err)
+	}
+
+	err = domainStore.Delete(context.Background(), id)
+	if err == nil || !strings.Contains(err.Error(), "cannot be deleted") {
+		t.Fatalf("delete error = %v, want platform wildcard delete failure", err)
 	}
 }

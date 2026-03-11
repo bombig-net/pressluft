@@ -54,9 +54,8 @@ func TestSiteStoreCreateWithSandboxPrimaryDomain(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "pressluft.dev",
-		Kind:      DomainKindBase,
+		Kind:      DomainKindWildcard,
 		Ownership: DomainOwnershipPlatform,
-		Source:    DomainSourceSandbox,
 		Status:    DomainStatusActive,
 	})
 	if err != nil {
@@ -94,8 +93,11 @@ func TestSiteStoreCreateWithSandboxPrimaryDomain(t *testing.T) {
 	if domains[0].ParentDomainID != baseID {
 		t.Fatalf("parent_domain_id = %q, want %q", domains[0].ParentDomainID, baseID)
 	}
-	if domains[0].Source != DomainSourceSandbox {
-		t.Fatalf("source = %q, want %q", domains[0].Source, DomainSourceSandbox)
+	if domains[0].Kind != DomainKindDirect {
+		t.Fatalf("kind = %q, want %q", domains[0].Kind, DomainKindDirect)
+	}
+	if domains[0].Ownership != DomainOwnershipPlatform {
+		t.Fatalf("ownership = %q, want %q", domains[0].Ownership, DomainOwnershipPlatform)
 	}
 }
 
@@ -106,9 +108,8 @@ func TestSiteStoreCreateWithPendingSandboxBaseDomainFails(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "pressluft.dev",
-		Kind:      DomainKindBase,
+		Kind:      DomainKindWildcard,
 		Ownership: DomainOwnershipPlatform,
-		Source:    DomainSourceSandbox,
 		Status:    DomainStatusPending,
 	})
 	if err != nil {
@@ -201,9 +202,8 @@ func TestSiteStoreUpdateRollsBackWhenPrimaryDomainAssignmentFails(t *testing.T) 
 	}
 	_, err = domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "pressluft.dev",
-		Kind:      DomainKindBase,
+		Kind:      DomainKindWildcard,
 		Ownership: DomainOwnershipPlatform,
-		Source:    DomainSourceSandbox,
 		Status:    DomainStatusActive,
 	})
 	if err != nil {

@@ -181,9 +181,8 @@ func TestSitesCreateWithSandboxPrimaryDomainConfig(t *testing.T) {
 	domainStore := NewDomainStore(db)
 	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "pressluft.dev",
-		Kind:      DomainKindBase,
+		Kind:      DomainKindWildcard,
 		Ownership: DomainOwnershipPlatform,
-		Source:    DomainSourceSandbox,
 		Status:    DomainStatusActive,
 	})
 	if err != nil {
@@ -225,9 +224,8 @@ func TestSitesCreateReturnsBadRequestForDuplicatePrimaryDomain(t *testing.T) {
 	domainStore := NewDomainStore(db)
 	_, err := domainStore.Create(context.Background(), CreateDomainInput{
 		Hostname:  "agency.example.test",
-		Kind:      DomainKindHostname,
+		Kind:      DomainKindDirect,
 		Ownership: DomainOwnershipCustomer,
-		Source:    DomainSourceCustom,
 		Status:    DomainStatusActive,
 	})
 	if err != nil {

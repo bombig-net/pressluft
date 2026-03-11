@@ -128,7 +128,6 @@ type CreateDomainRequest struct {
 	Hostname       string `json:"hostname"`
 	Kind           string `json:"kind,omitempty"`
 	Ownership      string `json:"ownership,omitempty"`
-	Source         string `json:"source,omitempty"`
 	Status         string `json:"status,omitempty"`
 	SiteID         string `json:"site_id,omitempty"`
 	ParentDomainID string `json:"parent_domain_id,omitempty"`
@@ -139,7 +138,6 @@ func (r *CreateDomainRequest) Validate() error {
 	r.Hostname = strings.TrimSpace(r.Hostname)
 	r.Kind = strings.TrimSpace(r.Kind)
 	r.Ownership = strings.TrimSpace(r.Ownership)
-	r.Source = strings.TrimSpace(r.Source)
 	r.Status = strings.TrimSpace(r.Status)
 	r.SiteID = strings.TrimSpace(r.SiteID)
 	r.ParentDomainID = strings.TrimSpace(r.ParentDomainID)
@@ -153,7 +151,6 @@ type UpdateDomainRequest struct {
 	Hostname       *string `json:"hostname,omitempty"`
 	Kind           *string `json:"kind,omitempty"`
 	Ownership      *string `json:"ownership,omitempty"`
-	Source         *string `json:"source,omitempty"`
 	Status         *string `json:"status,omitempty"`
 	SiteID         *string `json:"site_id,omitempty"`
 	ParentDomainID *string `json:"parent_domain_id,omitempty"`
@@ -171,7 +168,6 @@ func (r *UpdateDomainRequest) Validate() error {
 	trim(&r.Hostname)
 	trim(&r.Kind)
 	trim(&r.Ownership)
-	trim(&r.Source)
 	trim(&r.Status)
 	trim(&r.SiteID)
 	trim(&r.ParentDomainID)
@@ -268,7 +264,6 @@ type StoredDomain struct {
 	Hostname       string `json:"hostname"`
 	Kind           string `json:"kind"`
 	Ownership      string `json:"ownership"`
-	Source         string `json:"source"`
 	Status         string `json:"status"`
 	SiteID         string `json:"site_id,omitempty"`
 	SiteName       string `json:"site_name,omitempty"`

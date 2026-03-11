@@ -12,16 +12,11 @@ import (
 )
 
 const (
-	DomainKindBase     = "base"
-	DomainKindHostname = "hostname"
+	DomainKindDirect   = "direct"
+	DomainKindWildcard = "wildcard"
 
 	DomainOwnershipPlatform = "platform"
 	DomainOwnershipCustomer = "customer"
-
-	DomainSourceSandbox = "sandbox"
-	DomainSourceCustom  = "custom"
-	DomainSourceManual  = "manual"
-	DomainSourceLegacy  = "legacy"
 
 	DomainStatusActive    = "active"
 	DomainStatusPending   = "pending"
@@ -36,7 +31,6 @@ type StoredDomain struct {
 	Hostname       string `json:"hostname"`
 	Kind           string `json:"kind"`
 	Ownership      string `json:"ownership"`
-	Source         string `json:"source"`
 	Status         string `json:"status"`
 	SiteID         string `json:"site_id,omitempty"`
 	SiteName       string `json:"site_name,omitempty"`
@@ -51,7 +45,6 @@ type CreateDomainInput struct {
 	Hostname       string
 	Kind           string
 	Ownership      string
-	Source         string
 	Status         string
 	SiteID         string
 	ParentDomainID string
@@ -62,7 +55,6 @@ type UpdateDomainInput struct {
 	Hostname       *string
 	Kind           *string
 	Ownership      *string
-	Source         *string
 	Status         *string
 	SiteID         *string
 	ParentDomainID *string
@@ -117,9 +109,8 @@ func (s *DomainStore) BackfillLegacyPrimaryDomains(ctx context.Context) error {
 	for _, item := range pending {
 		if _, err := s.Create(ctx, CreateDomainInput{
 			Hostname:  item.hostname,
-			Kind:      DomainKindHostname,
+			Kind:      DomainKindDirect,
 			Ownership: DomainOwnershipCustomer,
-			Source:    DomainSourceLegacy,
 			Status:    DomainStatusActive,
 			SiteID:    item.siteID,
 			IsPrimary: true,
@@ -146,9 +137,8 @@ func (s *DomainStore) EnsurePlatformBaseDomains(ctx context.Context) error {
 		}
 		if _, err := s.Create(ctx, CreateDomainInput{
 			Hostname:  hostname,
-			Kind:      DomainKindBase,
+			Kind:      DomainKindWildcard,
 			Ownership: DomainOwnershipPlatform,
-			Source:    DomainSourceSandbox,
 			Status:    spec.Status,
 		}); err != nil {
 			return fmt.Errorf("ensure platform base domain %q: %w", spec.Hostname, err)
@@ -178,7 +168,7 @@ func (s *DomainStore) createTx(ctx context.Context, tx *sql.Tx, in CreateDomainI
 	if err != nil {
 		return "", err
 	}
-	if err := s.ensureRelationsTx(ctx, tx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
+	if err := s.ensureRelationsTx(ctx, tx, prepared.Hostname, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
 		return "", err
 	}
 	publicID, err := idutil.New()
@@ -201,14 +191,13 @@ func (s *DomainStore) createTx(ctx context.Context, tx *sql.Tx, in CreateDomainI
 		}
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO domains (id, hostname, kind, ownership, source, status, site_id, parent_domain_id, is_primary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO domains (id, hostname, kind, ownership, status, site_id, parent_domain_id, is_primary, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		publicID,
 		prepared.Hostname,
 		prepared.Kind,
 		prepared.Ownership,
-		prepared.Source,
 		prepared.Status,
 		nullableSiteString(prepared.SiteID),
 		nullableSiteString(prepared.ParentDomainID),
@@ -287,7 +276,7 @@ func (s *DomainStore) updateTx(ctx context.Context, tx *sql.Tx, id string, in Up
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureRelationsTx(ctx, tx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
+	if err := s.ensureRelationsTx(ctx, tx, prepared.Hostname, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -312,13 +301,12 @@ func (s *DomainStore) updateTx(ctx context.Context, tx *sql.Tx, id string, in Up
 	}
 	res, err := tx.ExecContext(ctx, `
 		UPDATE domains
-		SET hostname = ?, kind = ?, ownership = ?, source = ?, status = ?, site_id = ?, parent_domain_id = ?, is_primary = ?, updated_at = ?
+		SET hostname = ?, kind = ?, ownership = ?, status = ?, site_id = ?, parent_domain_id = ?, is_primary = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		prepared.Hostname,
 		prepared.Kind,
 		prepared.Ownership,
-		prepared.Source,
 		prepared.Status,
 		nullableSiteString(prepared.SiteID),
 		nullableSiteString(prepared.ParentDomainID),
@@ -378,6 +366,9 @@ func (s *DomainStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if current.Ownership == DomainOwnershipPlatform && current.Kind == DomainKindWildcard {
+		return fmt.Errorf("platform wildcard domains cannot be deleted")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin delete domain tx: %w", err)
@@ -402,11 +393,11 @@ func (s *DomainStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *DomainStore) SetPrimaryHostnameForSite(ctx context.Context, siteID, hostname, source, ownership string) error {
-	return s.setPrimaryHostnameForSiteTx(ctx, nil, siteID, hostname, source, ownership)
+func (s *DomainStore) SetPrimaryHostnameForSite(ctx context.Context, siteID, hostname, ownership string) error {
+	return s.setPrimaryHostnameForSiteTx(ctx, nil, siteID, hostname, ownership)
 }
 
-func (s *DomainStore) setPrimaryHostnameForSiteTx(ctx context.Context, tx *sql.Tx, siteID, hostname, source, ownership string) error {
+func (s *DomainStore) setPrimaryHostnameForSiteTx(ctx context.Context, tx *sql.Tx, siteID, hostname, ownership string) error {
 	normalizedSiteID, err := idutil.Normalize(siteID)
 	if err != nil {
 		return fmt.Errorf("site_id: %w", err)
@@ -420,7 +411,7 @@ func (s *DomainStore) setPrimaryHostnameForSiteTx(ctx context.Context, tx *sql.T
 		return fmt.Errorf("lookup site hostname: %w", err)
 	}
 	if err == nil {
-		if existing.Kind != DomainKindHostname {
+		if existing.Kind != DomainKindDirect {
 			return fmt.Errorf("hostname %q cannot be used as a site primary domain", normalizedHostname)
 		}
 		if existing.SiteID != "" && existing.SiteID != normalizedSiteID {
@@ -430,7 +421,7 @@ func (s *DomainStore) setPrimaryHostnameForSiteTx(ctx context.Context, tx *sql.T
 		_, err := s.updateTx(ctx, tx, existing.ID, UpdateDomainInput{IsPrimary: &isPrimary, SiteID: &normalizedSiteID})
 		return err
 	}
-	_, err = s.createTx(ctx, tx, CreateDomainInput{Hostname: normalizedHostname, Kind: DomainKindHostname, Ownership: ownership, Source: source, Status: DomainStatusActive, SiteID: normalizedSiteID, IsPrimary: true})
+	_, err = s.createTx(ctx, tx, CreateDomainInput{Hostname: normalizedHostname, Kind: DomainKindDirect, Ownership: ownership, Status: DomainStatusActive, SiteID: normalizedSiteID, IsPrimary: true})
 	return err
 }
 
@@ -470,7 +461,7 @@ func (s *DomainStore) clearPrimaryHostnameForSiteTx(ctx context.Context, tx *sql
 	return nil
 }
 
-const domainSelectQuery = `SELECT d.id, d.hostname, d.kind, d.ownership, d.source, d.status,
+const domainSelectQuery = `SELECT d.id, d.hostname, d.kind, d.ownership, d.status,
 	COALESCE(d.site_id, ''), COALESCE(si.name, ''), COALESCE(d.parent_domain_id, ''), COALESCE(parent.hostname, ''),
 	d.is_primary, d.created_at, d.updated_at
 	FROM domains d
@@ -487,7 +478,6 @@ func scanDomains(rows *sql.Rows) ([]StoredDomain, error) {
 			&domain.Hostname,
 			&domain.Kind,
 			&domain.Ownership,
-			&domain.Source,
 			&domain.Status,
 			&domain.SiteID,
 			&domain.SiteName,
@@ -516,7 +506,6 @@ func prepareCreateDomainInput(in CreateDomainInput) (CreateDomainInput, error) {
 	in.Hostname = hostname
 	in.Kind = strings.TrimSpace(in.Kind)
 	in.Ownership = strings.TrimSpace(in.Ownership)
-	in.Source = strings.TrimSpace(in.Source)
 	in.Status = strings.TrimSpace(in.Status)
 	in.SiteID = strings.TrimSpace(in.SiteID)
 	in.ParentDomainID = strings.TrimSpace(in.ParentDomainID)
@@ -526,9 +515,6 @@ func prepareCreateDomainInput(in CreateDomainInput) (CreateDomainInput, error) {
 	if in.Ownership == "" {
 		return CreateDomainInput{}, fmt.Errorf("ownership is required")
 	}
-	if in.Source == "" {
-		return CreateDomainInput{}, fmt.Errorf("source is required")
-	}
 	if in.Status == "" {
 		in.Status = DomainStatusActive
 	}
@@ -536,9 +522,6 @@ func prepareCreateDomainInput(in CreateDomainInput) (CreateDomainInput, error) {
 		return CreateDomainInput{}, err
 	}
 	if _, err := normalizeDomainOwnership(in.Ownership); err != nil {
-		return CreateDomainInput{}, err
-	}
-	if _, err := normalizeDomainSource(in.Source); err != nil {
 		return CreateDomainInput{}, err
 	}
 	if _, err := normalizeDomainStatus(in.Status); err != nil {
@@ -558,8 +541,8 @@ func prepareCreateDomainInput(in CreateDomainInput) (CreateDomainInput, error) {
 		}
 		in.ParentDomainID = normalized
 	}
-	if in.Kind == DomainKindBase && (in.SiteID != "" || in.IsPrimary) {
-		return CreateDomainInput{}, fmt.Errorf("base domains cannot be assigned to a site or marked primary")
+	if in.Kind == DomainKindWildcard && (in.SiteID != "" || in.IsPrimary) {
+		return CreateDomainInput{}, fmt.Errorf("wildcard domains cannot be assigned to a site or marked primary")
 	}
 	return in, nil
 }
@@ -569,7 +552,6 @@ func prepareUpdateDomainInput(current StoredDomain, in UpdateDomainInput) (Creat
 		Hostname:       current.Hostname,
 		Kind:           current.Kind,
 		Ownership:      current.Ownership,
-		Source:         current.Source,
 		Status:         current.Status,
 		SiteID:         current.SiteID,
 		ParentDomainID: current.ParentDomainID,
@@ -583,9 +565,6 @@ func prepareUpdateDomainInput(current StoredDomain, in UpdateDomainInput) (Creat
 	}
 	if in.Ownership != nil {
 		prepared.Ownership = *in.Ownership
-	}
-	if in.Source != nil {
-		prepared.Source = *in.Source
 	}
 	if in.Status != nil {
 		prepared.Status = *in.Status
@@ -602,11 +581,11 @@ func prepareUpdateDomainInput(current StoredDomain, in UpdateDomainInput) (Creat
 	return prepareCreateDomainInput(prepared)
 }
 
-func (s *DomainStore) ensureRelations(ctx context.Context, kind, siteID, parentDomainID string) error {
-	return s.ensureRelationsTx(ctx, nil, kind, siteID, parentDomainID)
+func (s *DomainStore) ensureRelations(ctx context.Context, hostname, kind, siteID, parentDomainID string) error {
+	return s.ensureRelationsTx(ctx, nil, hostname, kind, siteID, parentDomainID)
 }
 
-func (s *DomainStore) ensureRelationsTx(ctx context.Context, tx *sql.Tx, kind, siteID, parentDomainID string) error {
+func (s *DomainStore) ensureRelationsTx(ctx context.Context, tx *sql.Tx, hostname, kind, siteID, parentDomainID string) error {
 	if siteID != "" {
 		if err := ensureSiteExists(ctx, s.db, tx, siteID); err != nil {
 			return err
@@ -617,12 +596,18 @@ func (s *DomainStore) ensureRelationsTx(ctx context.Context, tx *sql.Tx, kind, s
 		if err != nil {
 			return fmt.Errorf("parent_domain_id: %w", err)
 		}
-		if parent.Kind != DomainKindBase {
-			return fmt.Errorf("parent_domain_id must reference a base domain")
+		if parent.Kind != DomainKindWildcard {
+			return fmt.Errorf("parent_domain_id must reference a wildcard domain")
+		}
+		if kind != DomainKindDirect {
+			return fmt.Errorf("only direct domains can reference a parent_domain_id")
+		}
+		if !strings.HasSuffix(hostname, "."+parent.Hostname) {
+			return fmt.Errorf("hostname must be within the parent wildcard domain")
 		}
 	}
-	if kind == DomainKindBase && parentDomainID != "" {
-		return fmt.Errorf("base domains cannot have a parent_domain_id")
+	if kind == DomainKindWildcard && parentDomainID != "" {
+		return fmt.Errorf("wildcard domains cannot have a parent_domain_id")
 	}
 	return nil
 }
@@ -693,7 +678,7 @@ func normalizeHostname(raw string) (string, error) {
 func normalizeDomainKind(raw string) (string, error) {
 	kind := strings.TrimSpace(raw)
 	switch kind {
-	case DomainKindBase, DomainKindHostname:
+	case DomainKindDirect, DomainKindWildcard:
 		return kind, nil
 	default:
 		return "", fmt.Errorf("unsupported domain kind %q", raw)
@@ -707,16 +692,6 @@ func normalizeDomainOwnership(raw string) (string, error) {
 		return ownership, nil
 	default:
 		return "", fmt.Errorf("unsupported domain ownership %q", raw)
-	}
-}
-
-func normalizeDomainSource(raw string) (string, error) {
-	source := strings.TrimSpace(raw)
-	switch source {
-	case DomainSourceSandbox, DomainSourceCustom, DomainSourceManual, DomainSourceLegacy:
-		return source, nil
-	default:
-		return "", fmt.Errorf("unsupported domain source %q", raw)
 	}
 }
 

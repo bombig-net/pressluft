@@ -23,7 +23,7 @@ func TestDomainsCreateAssignListDeleteEndpoints(t *testing.T) {
 		t.Fatalf("create site: %v", err)
 	}
 
-	createBaseBody, _ := json.Marshal(map[string]any{"hostname": "sandbox.pressluft.test"})
+	createBaseBody, _ := json.Marshal(map[string]any{"hostname": "sandbox.pressluft.test", "kind": "wildcard", "ownership": "platform"})
 	createBaseReq := httptest.NewRequest(http.MethodPost, "/api/domains", bytes.NewReader(createBaseBody))
 	createBaseReq.Header.Set("Content-Type", "application/json")
 	createBaseRes := httptest.NewRecorder()
@@ -71,5 +71,30 @@ func TestDomainsCreateAssignListDeleteEndpoints(t *testing.T) {
 	handler.ServeHTTP(deleteRes, deleteReq)
 	if deleteRes.Code != http.StatusOK {
 		t.Fatalf("delete domain status = %d, want %d; body = %s", deleteRes.Code, http.StatusOK, deleteRes.Body.String())
+	}
+}
+
+func TestDomainsCreateDefaultsToCustomerDirectInventory(t *testing.T) {
+	db := mustOpenServerHandlerDB(t)
+	handler := NewHandler(db)
+
+	body, _ := json.Marshal(map[string]any{"hostname": "agency.example.test"})
+	req := httptest.NewRequest(http.MethodPost, "/api/domains", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body = %s", res.Code, http.StatusCreated, res.Body.String())
+	}
+
+	var created StoredDomain
+	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Kind != DomainKindDirect {
+		t.Fatalf("kind = %q, want %q", created.Kind, DomainKindDirect)
+	}
+	if created.Ownership != DomainOwnershipCustomer {
+		t.Fatalf("ownership = %q, want %q", created.Ownership, DomainOwnershipCustomer)
 	}
 }

@@ -62,7 +62,6 @@ export interface CreateDomainRequest {
   hostname: string
   kind?: string
   ownership?: string
-  source?: string
   status?: string
   site_id?: string
   parent_domain_id?: string
@@ -270,7 +269,6 @@ export interface StoredDomain {
   hostname: string
   kind: string
   ownership: string
-  source: string
   status: string
   site_id?: string
   site_name?: string
@@ -337,7 +335,6 @@ export interface UpdateDomainRequest {
   hostname?: string
   kind?: string
   ownership?: string
-  source?: string
   status?: string
   site_id?: string
   parent_domain_id?: string
