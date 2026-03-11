@@ -112,6 +112,7 @@ const loadActivity = async () => {
   }
 };
 
+const allBaseDomains = ref<StoredDomain[]>([]);
 const availableBaseDomains = ref<StoredDomain[]>([]);
 const hasMultipleBaseDomains = computed(() => availableBaseDomains.value.length > 1);
 
@@ -121,12 +122,17 @@ const refreshDomains = async () => {
     fetchDomains(),
     fetchSiteDomains(siteId.value),
   ]);
-  availableBaseDomains.value = allDomains.filter((domain) => domain.kind === "base");
+  allBaseDomains.value = allDomains.filter((domain) => domain.kind === "base");
+  availableBaseDomains.value = allBaseDomains.value.filter((domain) => domain.status === "active");
   siteDomains.value = assignedDomains;
   if (!hostnameForm.baseDomainId && availableBaseDomains.value[0]) {
     hostnameForm.baseDomainId = availableBaseDomains.value[0].id;
   }
 };
+
+const futureBaseDomains = computed(() =>
+  allBaseDomains.value.filter((domain) => domain.status !== "active"),
+);
 
 const buildSandboxHostname = () => {
   const base = availableBaseDomains.value.find((domain) => domain.id === hostnameForm.baseDomainId);
@@ -268,7 +274,7 @@ watch(siteId, async (value, previous) => {
             </div>
             <p class="mt-3 max-w-2xl text-base leading-7 text-white/72">
               {{ site.primary_domain || "No primary domain assigned yet." }}
-              This site lives on {{ site.server_name }} and keeps every client domain or temporary Pressluft URL visible as its own record.
+              This site lives on {{ site.server_name }} and keeps every domain or temporary Pressluft URL visible as its own record.
             </p>
           </div>
 
@@ -365,7 +371,7 @@ watch(siteId, async (value, previous) => {
                       <div class="flex flex-wrap items-center gap-2">
                         <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
                         <Badge v-if="domain.is_primary" variant="outline" class="border-primary/30 bg-primary/10 text-primary">Primary</Badge>
-                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.parent_domain_id || domain.ownership === 'platform' ? 'Temporary URL' : 'Client domain' }}</Badge>
+                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.parent_domain_id || domain.ownership === 'platform' ? 'Temporary URL' : 'Domain' }}</Badge>
                       </div>
                       <p class="mt-1 text-xs text-muted-foreground">
                         {{ domain.parent_hostname || (domain.ownership === "platform" ? "Provided by Pressluft" : "Managed by the agency") }}
@@ -392,7 +398,7 @@ watch(siteId, async (value, previous) => {
                       Temporary Pressluft URL
                     </Button>
                     <Button type="button" size="sm" :variant="hostnameForm.mode === 'custom' ? 'default' : 'outline'" @click="hostnameForm.mode = 'custom'">
-                      Client domain
+                      Domain
                     </Button>
                   </div>
                 <div class="mt-4 grid gap-4 sm:grid-cols-2">
@@ -417,12 +423,15 @@ watch(siteId, async (value, previous) => {
                       Pressluft URL domains are provided by the platform. You only choose the label for this site.
                     </p>
                     <p v-if="availableBaseDomains.length === 0" class="sm:col-span-2 text-sm text-muted-foreground">
-                      No Pressluft URL domains are available right now, so attach a client domain instead.
+                      No Pressluft URL domains are available right now, so attach a domain instead.
+                    </p>
+                    <p v-if="futureBaseDomains.length > 0" class="sm:col-span-2 text-sm text-muted-foreground">
+                      Coming soon: {{ futureBaseDomains.map((domain) => domain.hostname).join(", ") }}.
                     </p>
                   </template>
                   <template v-else>
                     <div class="space-y-1.5 sm:col-span-2">
-                      <Label class="text-sm font-medium text-muted-foreground">Client domain</Label>
+                      <Label class="text-sm font-medium text-muted-foreground">Domain</Label>
                       <Input v-model="hostnameForm.hostname" placeholder="www.client-example.com" />
                     </div>
                   </template>

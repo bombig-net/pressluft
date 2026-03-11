@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDomains } from "~/composables/useDomains";
-import { useSites } from "~/composables/useSites";
 
 const {
   domains,
@@ -17,20 +16,24 @@ const {
   createDomain,
   deleteDomain,
 } = useDomains();
-const { sites, fetchSites } = useSites();
 
 const pageError = ref("");
 const successMessage = ref("");
 
 const form = reactive({
-  mode: "attach",
   hostname: "",
-  siteId: "",
-  assignAsPrimary: true,
 });
 
 const baseDomains = computed(() =>
   domains.value.filter((domain) => domain.kind === "base"),
+);
+
+const activeBaseDomains = computed(() =>
+  baseDomains.value.filter((domain) => domain.status === "active"),
+);
+
+const pendingBaseDomains = computed(() =>
+  baseDomains.value.filter((domain) => domain.status !== "active"),
 );
 
 const managedDomains = computed(() =>
@@ -43,25 +46,11 @@ const domainStats = computed(() => ({
   unassigned: managedDomains.value.filter((domain) => !domain.site_id).length,
 }));
 
-const siteOptions = computed(() =>
-  [...sites.value].sort((a, b) => a.name.localeCompare(b.name)),
-);
-
-const canSubmit = computed(() => {
-  if (!form.hostname.trim()) {
-    return false;
-  }
-  if (form.mode === "attach") {
-    return Boolean(form.siteId);
-  }
-  return true;
-});
-
 const domainKindLabel = (domain: (typeof managedDomains.value)[number]) => {
   if (domain.parent_domain_id || domain.ownership === "platform") {
     return "Temporary URL";
   }
-  return "Client domain";
+  return "Domain";
 };
 
 const domainRoleLabel = (domain: (typeof managedDomains.value)[number]) =>
@@ -70,37 +59,24 @@ const domainRoleLabel = (domain: (typeof managedDomains.value)[number]) =>
 const loadPage = async () => {
   pageError.value = "";
   try {
-    await Promise.all([fetchDomains(), fetchSites()]);
-    if (!form.siteId && siteOptions.value[0]) {
-      form.siteId = siteOptions.value[0].id;
-    }
+    await fetchDomains();
   } catch (e: any) {
     pageError.value = e.message || "Failed to load domains";
   }
 };
 
 const resetForm = () => {
-  form.mode = "attach";
   form.hostname = "";
-  form.siteId = siteOptions.value[0]?.id || "";
-  form.assignAsPrimary = true;
 };
 
 const handleCreateDomain = async () => {
   pageError.value = "";
   successMessage.value = "";
   try {
-    const created = await createDomain({
-      hostname: form.hostname,
-      site_id: form.mode === "attach" ? form.siteId : undefined,
-      is_primary: form.mode === "attach" ? form.assignAsPrimary : false,
-    });
-    successMessage.value =
-      form.mode === "attach" && created.site_name
-        ? `Added ${created.hostname} and attached it to ${created.site_name}.`
-        : `Added ${created.hostname}.`;
+    const created = await createDomain({ hostname: form.hostname });
+    successMessage.value = `Added ${created.hostname}.`;
     resetForm();
-    await Promise.all([fetchDomains(), fetchSites()]);
+    await fetchDomains();
   } catch (e: any) {
     pageError.value = e.message || "Failed to add domain";
   }
@@ -137,7 +113,7 @@ onMounted(loadPage);
           </div>
           <div>
             <h1 class="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Keep every client domain and temporary URL in one place.
+              Keep every domain and temporary URL in one place.
             </h1>
             <p class="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
               Add real customer domains, attach them to sites when needed, and review which address each site currently uses without exposing Pressluft platform setup.
@@ -173,44 +149,19 @@ onMounted(loadPage);
       <Card class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
         <CardHeader class="border-b border-border/50 px-6 py-5">
           <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Add domain</p>
-          <h2 class="mt-1 text-xl font-semibold text-foreground">Bring in a domain the agency manages</h2>
+          <h2 class="mt-1 text-xl font-semibold text-foreground">Bring in a new domain</h2>
         </CardHeader>
         <CardContent class="px-6 py-5">
           <form class="space-y-4" @submit.prevent="handleCreateDomain">
-            <div class="flex flex-wrap gap-2">
-              <Button type="button" size="sm" :variant="form.mode === 'attach' ? 'default' : 'outline'" @click="form.mode = 'attach'">
-                Add and attach
-              </Button>
-              <Button type="button" size="sm" :variant="form.mode === 'unassigned' ? 'default' : 'outline'" @click="form.mode = 'unassigned'">
-                Add only
-              </Button>
-            </div>
             <div class="space-y-1.5">
               <Label class="text-sm font-medium text-muted-foreground">Domain</Label>
               <Input v-model="form.hostname" placeholder="www.client-example.com" />
             </div>
-            <div v-if="form.mode === 'attach'" class="grid gap-4 sm:grid-cols-2">
-              <div class="space-y-1.5 sm:col-span-2">
-                <Label class="text-sm font-medium text-muted-foreground">Attach to site</Label>
-                <select
-                  v-model="form.siteId"
-                  class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-                >
-                  <option v-for="site in siteOptions" :key="site.id" :value="site.id">
-                    {{ site.name }}
-                  </option>
-                </select>
-              </div>
-              <label class="flex items-start gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground sm:col-span-2">
-                <input v-model="form.assignAsPrimary" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-border/60" />
-                Make this the primary domain for the selected site
-              </label>
-            </div>
             <div class="rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-6 text-muted-foreground">
-              Pressluft-provided temporary URL domains are preinstalled by the platform. This page is for the domains your team brings in and tracks across sites.
+              New domains land here as inventory first. Site assignment happens from the site record, while Pressluft-provided temporary URL domains stay in the background.
             </div>
-            <Button type="submit" class="w-full bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !canSubmit">
-              {{ saving ? "Adding domain..." : form.mode === "attach" ? "Add and attach domain" : "Add domain" }}
+            <Button type="submit" class="w-full bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !form.hostname.trim()">
+              {{ saving ? "Adding domain..." : "Add domain" }}
             </Button>
           </form>
         </CardContent>
@@ -264,10 +215,17 @@ onMounted(loadPage);
             <p>
               These are preinstalled by Pressluft and used when a site gets a temporary URL. They are shown here for context, not as something operators need to manage day to day.
             </p>
-            <div class="flex flex-wrap gap-2">
-              <Badge v-for="domain in baseDomains" :key="domain.id" variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">
-                {{ domain.hostname }}
-              </Badge>
+            <div class="space-y-3">
+              <div v-if="activeBaseDomains.length" class="flex flex-wrap gap-2">
+                <Badge v-for="domain in activeBaseDomains" :key="domain.id" variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">
+                  {{ domain.hostname }}
+                </Badge>
+              </div>
+              <div v-if="pendingBaseDomains.length" class="flex flex-wrap gap-2">
+                <Badge v-for="domain in pendingBaseDomains" :key="domain.id" variant="outline" class="border-accent/30 bg-accent/10 text-accent">
+                  {{ domain.hostname }} · coming soon
+                </Badge>
+              </div>
             </div>
           </CardContent>
         </Card>

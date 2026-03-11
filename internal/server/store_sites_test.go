@@ -99,6 +99,37 @@ func TestSiteStoreCreateWithSandboxPrimaryDomain(t *testing.T) {
 	}
 }
 
+func TestSiteStoreCreateWithPendingSandboxBaseDomainFails(t *testing.T) {
+	db := mustOpenTestDB(t)
+	store := NewSiteStore(db)
+	domainStore := NewDomainStore(db)
+	serverID := mustInsertServerWithStatus(t, db, "ready")
+	baseID, err := domainStore.Create(context.Background(), CreateDomainInput{
+		Hostname:  "pressluft.dev",
+		Kind:      DomainKindBase,
+		Ownership: DomainOwnershipPlatform,
+		Source:    DomainSourceSandbox,
+		Status:    DomainStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("create sandbox domain: %v", err)
+	}
+
+	_, err = store.Create(context.Background(), CreateSiteInput{
+		ServerID: serverID,
+		Name:     "Agency Brochure",
+		PrimaryDomainConfig: &CreateSitePrimaryDomainInput{
+			Mode:           "sandbox",
+			Label:          "Northwind Live",
+			ParentDomainID: baseID,
+		},
+		Status: SiteStatusDraft,
+	})
+	if err == nil || !strings.Contains(err.Error(), "active sandbox domain") {
+		t.Fatalf("create site error = %v, want active sandbox domain failure", err)
+	}
+}
+
 func TestSiteStoreListByServer(t *testing.T) {
 	db := mustOpenTestDB(t)
 	store := NewSiteStore(db)

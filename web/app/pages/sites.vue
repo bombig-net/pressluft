@@ -71,7 +71,11 @@ const serverOptions = computed(() =>
 );
 
 const sandboxDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "base"),
+  domains.value.filter((domain) => domain.kind === "base" && domain.status === "active"),
+);
+
+const futureSandboxDomains = computed(() =>
+  domains.value.filter((domain) => domain.kind === "base" && domain.status !== "active"),
 );
 
 const hasMultipleSandboxDomains = computed(() => sandboxDomains.value.length > 1);
@@ -417,7 +421,7 @@ watch(sandboxDomains, (value) => {
                   Temporary Pressluft URL
                 </Button>
                 <Button type="button" size="sm" :variant="form.domainMode === 'customer' ? 'default' : 'outline'" @click="form.domainMode = 'customer'">
-                  Client domain
+                  Domain
                 </Button>
               </div>
 
@@ -443,20 +447,23 @@ watch(sandboxDomains, (value) => {
                   <Input :model-value="buildSandboxPrimaryDomain()" readonly placeholder="Enter a label to preview the temporary URL" />
                 </div>
                 <p v-if="sandboxDomains.length === 0" class="sm:col-span-2 text-sm text-muted-foreground">
-                  No Pressluft URL domains are available right now, so start with a client domain instead.
+                  No Pressluft URL domains are available right now, so start with a domain instead.
                 </p>
                 <p v-else class="sm:col-span-2 text-sm text-muted-foreground">
                   Pressluft URL domains are preinstalled by the platform. You only choose the label that becomes part of the temporary address.
                 </p>
+                <p v-if="futureSandboxDomains.length > 0" class="sm:col-span-2 text-sm text-muted-foreground">
+                  Coming soon: {{ futureSandboxDomains.map((domain) => domain.hostname).join(", ") }}.
+                </p>
               </div>
 
               <div v-else class="space-y-1.5">
-                <Label for="site-customer-domain" class="text-sm font-medium text-muted-foreground">Client domain</Label>
+                <Label for="site-customer-domain" class="text-sm font-medium text-muted-foreground">Domain</Label>
                 <Input id="site-customer-domain" v-model="form.customerDomain" placeholder="www.client-example.com" />
               </div>
 
               <p class="text-sm leading-6 text-muted-foreground">
-                Client domains stay visible in Domains, while temporary Pressluft URLs use the platform-provided roots behind the scenes.
+                Domains stay visible in Domains, while temporary Pressluft URLs use the platform-provided roots behind the scenes.
               </p>
             </div>
 

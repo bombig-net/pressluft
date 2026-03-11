@@ -114,3 +114,35 @@ func TestDomainStoreBackfillsLegacyPrimaryDomains(t *testing.T) {
 		t.Fatal("expected backfilled domain to be primary")
 	}
 }
+
+func TestDomainStoreEnsurePlatformBaseDomains(t *testing.T) {
+	db := mustOpenTestDB(t)
+	domainStore := NewDomainStore(db)
+
+	if err := domainStore.EnsurePlatformBaseDomains(context.Background()); err != nil {
+		t.Fatalf("ensure platform base domains: %v", err)
+	}
+	if err := domainStore.EnsurePlatformBaseDomains(context.Background()); err != nil {
+		t.Fatalf("ensure platform base domains second pass: %v", err)
+	}
+
+	domains, err := domainStore.List(context.Background())
+	if err != nil {
+		t.Fatalf("list domains: %v", err)
+	}
+	if len(domains) != 2 {
+		t.Fatalf("domain count = %d, want 2", len(domains))
+	}
+
+	byHostname := map[string]StoredDomain{}
+	for _, domain := range domains {
+		byHostname[domain.Hostname] = domain
+	}
+
+	if byHostname["pressluft.bombig.app"].Status != DomainStatusActive {
+		t.Fatalf("pressluft.bombig.app status = %q, want %q", byHostname["pressluft.bombig.app"].Status, DomainStatusActive)
+	}
+	if byHostname["pressluft.dev"].Status != DomainStatusPending {
+		t.Fatalf("pressluft.dev status = %q, want %q", byHostname["pressluft.dev"].Status, DomainStatusPending)
+	}
+}

@@ -97,6 +97,7 @@ func NewHandlerWithOptions(db *sql.DB, hub *ws.Hub, wsHandler *WSHandler, nodeHa
 		serverStore := NewServerStore(db)
 		siteStore := NewSiteStore(db)
 		domainStore := NewDomainStore(db)
+		_ = domainStore.EnsurePlatformBaseDomains(context.Background())
 		_ = domainStore.BackfillLegacyPrimaryDomains(context.Background())
 
 		sh := &serversHandler{

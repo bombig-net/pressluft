@@ -73,6 +73,16 @@ type DomainStore struct {
 	db *sql.DB
 }
 
+type PlatformBaseDomainSpec struct {
+	Hostname string
+	Status   string
+}
+
+var defaultPlatformBaseDomains = []PlatformBaseDomainSpec{
+	{Hostname: "pressluft.bombig.app", Status: DomainStatusActive},
+	{Hostname: "pressluft.dev", Status: DomainStatusPending},
+}
+
 func NewDomainStore(db *sql.DB) *DomainStore {
 	return &DomainStore{db: db}
 }
@@ -115,6 +125,33 @@ func (s *DomainStore) BackfillLegacyPrimaryDomains(ctx context.Context) error {
 			IsPrimary: true,
 		}); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("backfill legacy domain for site %s: %w", item.siteID, err)
+		}
+	}
+	return nil
+}
+
+func (s *DomainStore) EnsurePlatformBaseDomains(ctx context.Context) error {
+	for _, spec := range defaultPlatformBaseDomains {
+		hostname, err := normalizeHostname(spec.Hostname)
+		if err != nil {
+			return fmt.Errorf("normalize platform base domain %q: %w", spec.Hostname, err)
+		}
+		var existingID string
+		err = s.db.QueryRowContext(ctx, `SELECT id FROM domains WHERE hostname = ? LIMIT 1`, hostname).Scan(&existingID)
+		if err == nil {
+			continue
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return fmt.Errorf("lookup platform base domain %q: %w", spec.Hostname, err)
+		}
+		if _, err := s.Create(ctx, CreateDomainInput{
+			Hostname:  hostname,
+			Kind:      DomainKindBase,
+			Ownership: DomainOwnershipPlatform,
+			Source:    DomainSourceSandbox,
+			Status:    spec.Status,
+		}); err != nil {
+			return fmt.Errorf("ensure platform base domain %q: %w", spec.Hostname, err)
 		}
 	}
 	return nil

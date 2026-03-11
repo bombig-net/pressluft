@@ -430,6 +430,9 @@ func buildSandboxHostname(ctx context.Context, tx *sql.Tx, label, parentDomainID
 	if parent.Kind != DomainKindBase {
 		return "", fmt.Errorf("primary_domain_config.parent_domain_id must reference a sandbox domain")
 	}
+	if parent.Status != DomainStatusActive {
+		return "", fmt.Errorf("primary_domain_config.parent_domain_id must reference an active sandbox domain")
+	}
 	return normalizeHostname(normalizedLabel + "." + parent.Hostname)
 }
 
