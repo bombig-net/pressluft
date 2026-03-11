@@ -95,7 +95,7 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 		publicID,
 		serverID,
 		strings.TrimSpace(in.Name),
-		nullableSiteString(in.PrimaryDomain),
+		nil,
 		strings.TrimSpace(in.Status),
 		nullableSiteString(in.WordPressPath),
 		nullableSiteString(in.PHPVersion),
@@ -106,14 +106,28 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 	if err != nil {
 		return "", fmt.Errorf("insert site: %w", err)
 	}
+	if strings.TrimSpace(in.PrimaryDomain) != "" {
+		if _, err := NewDomainStore(s.db).Create(ctx, CreateDomainInput{
+			Hostname:  in.PrimaryDomain,
+			Kind:      DomainKindHostname,
+			Ownership: DomainOwnershipCustomer,
+			Source:    DomainSourceManual,
+			Status:    DomainStatusActive,
+			SiteID:    publicID,
+			IsPrimary: true,
+		}); err != nil {
+			return "", err
+		}
+	}
 	return publicID, nil
 }
 
 func (s *SiteStore) List(ctx context.Context) ([]StoredSite, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, si.primary_domain, si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
+		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
 		 ORDER BY si.created_at DESC`,
 	)
 	if err != nil {
@@ -129,9 +143,10 @@ func (s *SiteStore) ListByServer(ctx context.Context, serverID string) ([]Stored
 		return nil, fmt.Errorf("server_id: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, si.primary_domain, si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
+		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
 		 WHERE si.server_id = ?
 		 ORDER BY si.created_at DESC`,
 		normalized,
@@ -156,9 +171,10 @@ func (s *SiteStore) GetByID(ctx context.Context, id string) (*StoredSite, error)
 		wordpressVersion sql.NullString
 	)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, si.primary_domain, si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
+		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
 		 WHERE si.id = ?`,
 		publicID,
 	).Scan(
@@ -218,7 +234,7 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 	}
 	primaryDomain := current.PrimaryDomain
 	if in.PrimaryDomain != nil {
-		primaryDomain = strings.TrimSpace(*in.PrimaryDomain)
+		primaryDomain = current.PrimaryDomain
 	}
 	status := current.Status
 	if in.Status != nil {
@@ -257,6 +273,19 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return nil, fmt.Errorf("site %s not found", publicID)
 	}
+	if in.PrimaryDomain != nil {
+		domainStore := NewDomainStore(s.db)
+		primaryDomain = strings.TrimSpace(*in.PrimaryDomain)
+		if primaryDomain == "" {
+			if err := domainStore.ClearPrimaryHostnameForSite(ctx, publicID); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := domainStore.SetPrimaryHostnameForSite(ctx, publicID, primaryDomain, DomainSourceManual, DomainOwnershipCustomer); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return s.GetByID(ctx, publicID)
 }
 
@@ -264,6 +293,9 @@ func (s *SiteStore) Delete(ctx context.Context, id string) error {
 	publicID, err := idutil.Normalize(id)
 	if err != nil {
 		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM domains WHERE site_id = ?`, publicID); err != nil {
+		return fmt.Errorf("delete site domains: %w", err)
 	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM sites WHERE id = ?`, publicID)
 	if err != nil {
@@ -282,6 +314,11 @@ func validateCreateSiteInput(in CreateSiteInput) error {
 	if strings.TrimSpace(in.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
+	if strings.TrimSpace(in.PrimaryDomain) != "" {
+		if _, err := normalizeHostname(in.PrimaryDomain); err != nil {
+			return err
+		}
+	}
 	if _, err := NormalizeSiteStatus(in.Status); err != nil {
 		return err
 	}
@@ -294,6 +331,11 @@ func validateUpdateSiteInput(in UpdateSiteInput) error {
 	}
 	if in.Status != nil {
 		if _, err := NormalizeSiteStatus(*in.Status); err != nil {
+			return err
+		}
+	}
+	if in.PrimaryDomain != nil && strings.TrimSpace(*in.PrimaryDomain) != "" {
+		if _, err := normalizeHostname(*in.PrimaryDomain); err != nil {
 			return err
 		}
 	}

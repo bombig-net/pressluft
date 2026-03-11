@@ -90,6 +90,63 @@ type CreateSiteRequest struct {
 	WordPressVersion string `json:"wordpress_version,omitempty"`
 }
 
+type CreateDomainRequest struct {
+	Hostname       string `json:"hostname"`
+	Kind           string `json:"kind,omitempty"`
+	Ownership      string `json:"ownership,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Status         string `json:"status,omitempty"`
+	SiteID         string `json:"site_id,omitempty"`
+	ParentDomainID string `json:"parent_domain_id,omitempty"`
+	IsPrimary      bool   `json:"is_primary,omitempty"`
+}
+
+func (r *CreateDomainRequest) Validate() error {
+	r.Hostname = strings.TrimSpace(r.Hostname)
+	r.Kind = strings.TrimSpace(r.Kind)
+	r.Ownership = strings.TrimSpace(r.Ownership)
+	r.Source = strings.TrimSpace(r.Source)
+	r.Status = strings.TrimSpace(r.Status)
+	r.SiteID = strings.TrimSpace(r.SiteID)
+	r.ParentDomainID = strings.TrimSpace(r.ParentDomainID)
+	if r.Hostname == "" {
+		return fmt.Errorf("hostname is required")
+	}
+	return nil
+}
+
+type UpdateDomainRequest struct {
+	Hostname       *string `json:"hostname,omitempty"`
+	Kind           *string `json:"kind,omitempty"`
+	Ownership      *string `json:"ownership,omitempty"`
+	Source         *string `json:"source,omitempty"`
+	Status         *string `json:"status,omitempty"`
+	SiteID         *string `json:"site_id,omitempty"`
+	ParentDomainID *string `json:"parent_domain_id,omitempty"`
+	IsPrimary      *bool   `json:"is_primary,omitempty"`
+}
+
+func (r *UpdateDomainRequest) Validate() error {
+	trim := func(value **string) {
+		if *value == nil {
+			return
+		}
+		trimmed := strings.TrimSpace(**value)
+		*value = &trimmed
+	}
+	trim(&r.Hostname)
+	trim(&r.Kind)
+	trim(&r.Ownership)
+	trim(&r.Source)
+	trim(&r.Status)
+	trim(&r.SiteID)
+	trim(&r.ParentDomainID)
+	if r.Hostname != nil && *r.Hostname == "" {
+		return fmt.Errorf("hostname is required")
+	}
+	return nil
+}
+
 func (r *CreateSiteRequest) Validate() error {
 	r.ServerID = strings.TrimSpace(r.ServerID)
 	r.Name = strings.TrimSpace(r.Name)
@@ -164,6 +221,28 @@ type StoredSite struct {
 	WordPressVersion string `json:"wordpress_version,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
+}
+
+type StoredDomain struct {
+	ID             string `json:"id"`
+	Hostname       string `json:"hostname"`
+	Kind           string `json:"kind"`
+	Ownership      string `json:"ownership"`
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	SiteID         string `json:"site_id,omitempty"`
+	SiteName       string `json:"site_name,omitempty"`
+	ParentDomainID string `json:"parent_domain_id,omitempty"`
+	ParentHostname string `json:"parent_hostname,omitempty"`
+	IsPrimary      bool   `json:"is_primary"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+type DeleteDomainResponse struct {
+	DomainID    string `json:"domain_id"`
+	Deleted     bool   `json:"deleted"`
+	Description string `json:"description"`
 }
 
 type DeleteSiteResponse struct {
@@ -386,12 +465,16 @@ var PublishedTypes = map[string]any{
 	"ValidationResult":        provider.ValidationResult{},
 	"CreateServerRequest":     CreateServerRequest{},
 	"CreateSiteRequest":       CreateSiteRequest{},
+	"CreateDomainRequest":     CreateDomainRequest{},
 	"ServerCatalogResponse":   ServerCatalogResponse{},
 	"CreateServerResponse":    CreateServerResponse{},
 	"StoredSite":              StoredSite{},
+	"StoredDomain":            StoredDomain{},
 	"DeleteSiteResponse":      DeleteSiteResponse{},
+	"DeleteDomainResponse":    DeleteDomainResponse{},
 	"DeleteServerResponse":    DeleteServerResponse{},
 	"UpdateSiteRequest":       UpdateSiteRequest{},
+	"UpdateDomainRequest":     UpdateDomainRequest{},
 	"RebuildOptionsResponse":  RebuildOptionsResponse{},
 	"ResizeOptionsResponse":   ResizeOptionsResponse{},
 	"FirewallsResponse":       FirewallsResponse{},

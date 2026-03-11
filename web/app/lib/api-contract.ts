@@ -58,6 +58,17 @@ export interface AuthActor {
   auth_source?: string
 }
 
+export interface CreateDomainRequest {
+  hostname: string
+  kind?: string
+  ownership?: string
+  source?: string
+  status?: string
+  site_id?: string
+  parent_domain_id?: string
+  is_primary?: boolean
+}
+
 export interface CreateJobRequest {
   kind: string
   server_id?: string
@@ -97,6 +108,12 @@ export interface CreateSiteRequest {
   wordpress_path?: string
   php_version?: string
   wordpress_version?: string
+}
+
+export interface DeleteDomainResponse {
+  domain_id: string
+  deleted: boolean
+  description: string
 }
 
 export interface DeleteServerResponse {
@@ -247,6 +264,22 @@ export interface StatusResponse {
   status: string
 }
 
+export interface StoredDomain {
+  id: string
+  hostname: string
+  kind: string
+  ownership: string
+  source: string
+  status: string
+  site_id?: string
+  site_name?: string
+  parent_domain_id?: string
+  parent_hostname?: string
+  is_primary: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface StoredProvider {
   id: string
   type: string
@@ -297,6 +330,17 @@ export interface StoredSite {
 
 export interface UnreadCountResponse {
   count: number
+}
+
+export interface UpdateDomainRequest {
+  hostname?: string
+  kind?: string
+  ownership?: string
+  source?: string
+  status?: string
+  site_id?: string
+  parent_domain_id?: string
+  is_primary?: boolean
 }
 
 export interface UpdateSiteRequest {

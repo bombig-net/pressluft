@@ -19,7 +19,6 @@ const successMessage = ref("");
 const form = reactive({
   serverId: "",
   name: "",
-  primaryDomain: "",
   status: "draft",
   wordpressPath: "/srv/www/",
   phpVersion: "8.3",
@@ -89,7 +88,6 @@ const loadPage = async () => {
 
 const resetForm = () => {
   form.name = "";
-  form.primaryDomain = "";
   form.status = "draft";
   form.wordpressPath = "/srv/www/";
   form.phpVersion = "8.3";
@@ -103,7 +101,6 @@ const handleCreateSite = async () => {
     const created = await createSite({
       server_id: form.serverId,
       name: form.name,
-      primary_domain: form.primaryDomain || undefined,
       status: form.status,
       wordpress_path: form.wordpressPath || undefined,
       php_version: form.phpVersion || undefined,
@@ -251,7 +248,7 @@ watch(
                     </Badge>
                   </div>
                   <p class="mt-1 text-sm text-muted-foreground">
-                    {{ site.primary_domain || "Domain not assigned yet" }}
+                    {{ site.primary_domain || "No primary hostname yet" }}
                   </p>
                   <div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
@@ -311,12 +308,8 @@ watch(
                 <Label for="site-name" class="text-sm font-medium text-muted-foreground">Site name</Label>
                 <Input id="site-name" v-model="form.name" placeholder="e.g. Northwind Marketing" />
               </div>
-              <div class="space-y-1.5">
-                <Label for="site-domain" class="text-sm font-medium text-muted-foreground">Primary domain</Label>
-                <Input id="site-domain" v-model="form.primaryDomain" placeholder="northwind.example" />
-              </div>
-              <div class="space-y-1.5">
-                <Label for="site-status" class="text-sm font-medium text-muted-foreground">Lifecycle state</Label>
+               <div class="space-y-1.5">
+                 <Label for="site-status" class="text-sm font-medium text-muted-foreground">Lifecycle state</Label>
                 <select
                   id="site-status"
                   v-model="form.status"
@@ -347,9 +340,9 @@ watch(
                 Why this matters
               </p>
               <p class="mt-2 text-sm leading-6 text-muted-foreground">
-                PR2 is about making sites feel real even before installation
-                flows exist. This metadata gives agencies a control-plane view of
-                their estate right now.
+                Site creation now captures the workload first. Hostnames live in
+                the dedicated domains surface and can be assigned after the site
+                record exists.
               </p>
             </div>
 

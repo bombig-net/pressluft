@@ -1,0 +1,637 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"pressluft/internal/idutil"
+)
+
+const (
+	DomainKindBase     = "base"
+	DomainKindHostname = "hostname"
+
+	DomainOwnershipPlatform = "platform"
+	DomainOwnershipCustomer = "customer"
+
+	DomainSourceSandbox = "sandbox"
+	DomainSourceCustom  = "custom"
+	DomainSourceManual  = "manual"
+	DomainSourceLegacy  = "legacy"
+
+	DomainStatusActive    = "active"
+	DomainStatusPending   = "pending"
+	DomainStatusAttention = "attention"
+	DomainStatusDisabled  = "disabled"
+)
+
+var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+type StoredDomain struct {
+	ID             string `json:"id"`
+	Hostname       string `json:"hostname"`
+	Kind           string `json:"kind"`
+	Ownership      string `json:"ownership"`
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	SiteID         string `json:"site_id,omitempty"`
+	SiteName       string `json:"site_name,omitempty"`
+	ParentDomainID string `json:"parent_domain_id,omitempty"`
+	ParentHostname string `json:"parent_hostname,omitempty"`
+	IsPrimary      bool   `json:"is_primary"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+type CreateDomainInput struct {
+	Hostname       string
+	Kind           string
+	Ownership      string
+	Source         string
+	Status         string
+	SiteID         string
+	ParentDomainID string
+	IsPrimary      bool
+}
+
+type UpdateDomainInput struct {
+	Hostname       *string
+	Kind           *string
+	Ownership      *string
+	Source         *string
+	Status         *string
+	SiteID         *string
+	ParentDomainID *string
+	IsPrimary      *bool
+}
+
+type DomainStore struct {
+	db *sql.DB
+}
+
+func NewDomainStore(db *sql.DB) *DomainStore {
+	return &DomainStore{db: db}
+}
+
+func (s *DomainStore) BackfillLegacyPrimaryDomains(ctx context.Context) error {
+	type legacyDomain struct {
+		siteID   string
+		hostname string
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT si.id, si.primary_domain
+		FROM sites si
+		LEFT JOIN domains d ON d.site_id = si.id AND d.is_primary = 1
+		WHERE si.primary_domain IS NOT NULL AND TRIM(si.primary_domain) != '' AND d.id IS NULL
+	`)
+	if err != nil {
+		return fmt.Errorf("query legacy site domains: %w", err)
+	}
+	defer rows.Close()
+
+	var pending []legacyDomain
+	for rows.Next() {
+		var item legacyDomain
+		if err := rows.Scan(&item.siteID, &item.hostname); err != nil {
+			return fmt.Errorf("scan legacy site domain: %w", err)
+		}
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate legacy site domains: %w", err)
+	}
+	for _, item := range pending {
+		if _, err := s.Create(ctx, CreateDomainInput{
+			Hostname:  item.hostname,
+			Kind:      DomainKindHostname,
+			Ownership: DomainOwnershipCustomer,
+			Source:    DomainSourceLegacy,
+			Status:    DomainStatusActive,
+			SiteID:    item.siteID,
+			IsPrimary: true,
+		}); err != nil && !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("backfill legacy domain for site %s: %w", item.siteID, err)
+		}
+	}
+	return nil
+}
+
+func (s *DomainStore) Create(ctx context.Context, in CreateDomainInput) (string, error) {
+	prepared, err := prepareCreateDomainInput(in)
+	if err != nil {
+		return "", err
+	}
+	if err := s.ensureRelations(ctx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
+		return "", err
+	}
+	publicID, err := idutil.New()
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin create domain tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	isPrimary := prepared.IsPrimary
+	if prepared.SiteID != "" && !isPrimary {
+		promote, err := shouldPromotePrimaryTx(ctx, tx, prepared.SiteID)
+		if err != nil {
+			return "", err
+		}
+		isPrimary = promote
+	}
+	if prepared.SiteID != "" && isPrimary {
+		if err := clearPrimaryForSiteTx(ctx, tx, prepared.SiteID, ""); err != nil {
+			return "", err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO domains (id, hostname, kind, ownership, source, status, site_id, parent_domain_id, is_primary, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		publicID,
+		prepared.Hostname,
+		prepared.Kind,
+		prepared.Ownership,
+		prepared.Source,
+		prepared.Status,
+		nullableSiteString(prepared.SiteID),
+		nullableSiteString(prepared.ParentDomainID),
+		boolToInt(isPrimary),
+		now,
+		now,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return "", fmt.Errorf("hostname %q already exists", prepared.Hostname)
+		}
+		return "", fmt.Errorf("insert domain: %w", err)
+	}
+	if err := syncLegacySitePrimaryDomainTx(ctx, tx, prepared.SiteID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit create domain tx: %w", err)
+	}
+	return publicID, nil
+}
+
+func (s *DomainStore) List(ctx context.Context) ([]StoredDomain, error) {
+	rows, err := s.db.QueryContext(ctx, domainSelectQuery+` ORDER BY d.created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list domains: %w", err)
+	}
+	defer rows.Close()
+	return scanDomains(rows)
+}
+
+func (s *DomainStore) ListBySite(ctx context.Context, siteID string) ([]StoredDomain, error) {
+	normalized, err := idutil.Normalize(siteID)
+	if err != nil {
+		return nil, fmt.Errorf("site_id: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, domainSelectQuery+` WHERE d.site_id = ? ORDER BY d.is_primary DESC, d.created_at ASC`, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("list domains by site: %w", err)
+	}
+	defer rows.Close()
+	return scanDomains(rows)
+}
+
+func (s *DomainStore) GetByID(ctx context.Context, id string) (*StoredDomain, error) {
+	publicID, err := idutil.Normalize(id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, domainSelectQuery+` WHERE d.id = ?`, publicID)
+	if err != nil {
+		return nil, fmt.Errorf("get domain: %w", err)
+	}
+	defer rows.Close()
+	domains, err := scanDomains(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("domain %s not found", publicID)
+	}
+	return &domains[0], nil
+}
+
+func (s *DomainStore) Update(ctx context.Context, id string, in UpdateDomainInput) (*StoredDomain, error) {
+	publicID, err := idutil.Normalize(id)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.GetByID(ctx, publicID)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := prepareUpdateDomainInput(*current, in)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureRelations(ctx, prepared.Kind, prepared.SiteID, prepared.ParentDomainID); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin update domain tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if prepared.SiteID != "" && prepared.IsPrimary {
+		if err := clearPrimaryForSiteTx(ctx, tx, prepared.SiteID, publicID); err != nil {
+			return nil, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE domains
+		SET hostname = ?, kind = ?, ownership = ?, source = ?, status = ?, site_id = ?, parent_domain_id = ?, is_primary = ?, updated_at = ?
+		WHERE id = ?
+	`,
+		prepared.Hostname,
+		prepared.Kind,
+		prepared.Ownership,
+		prepared.Source,
+		prepared.Status,
+		nullableSiteString(prepared.SiteID),
+		nullableSiteString(prepared.ParentDomainID),
+		boolToInt(prepared.IsPrimary),
+		now,
+		publicID,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return nil, fmt.Errorf("hostname %q already exists", prepared.Hostname)
+		}
+		return nil, fmt.Errorf("update domain: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return nil, fmt.Errorf("domain %s not found", publicID)
+	}
+	if prepared.SiteID != "" && !prepared.IsPrimary {
+		promote, err := shouldPromotePrimaryTx(ctx, tx, prepared.SiteID)
+		if err != nil {
+			return nil, err
+		}
+		if promote {
+			if _, err := tx.ExecContext(ctx, `UPDATE domains SET is_primary = 1, updated_at = ? WHERE id = ?`, now, publicID); err != nil {
+				return nil, fmt.Errorf("promote domain to primary: %w", err)
+			}
+		}
+	}
+	if err := syncLegacySitePrimaryDomainTx(ctx, tx, current.SiteID); err != nil {
+		return nil, err
+	}
+	if current.SiteID != prepared.SiteID {
+		if err := syncLegacySitePrimaryDomainTx(ctx, tx, prepared.SiteID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit update domain tx: %w", err)
+	}
+	return s.GetByID(ctx, publicID)
+}
+
+func (s *DomainStore) Delete(ctx context.Context, id string) error {
+	publicID, err := idutil.Normalize(id)
+	if err != nil {
+		return err
+	}
+	current, err := s.GetByID(ctx, publicID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete domain tx: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE id = ?`, publicID)
+	if err != nil {
+		return fmt.Errorf("delete domain: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("domain %s not found", publicID)
+	}
+	if err := syncLegacySitePrimaryDomainTx(ctx, tx, current.SiteID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete domain tx: %w", err)
+	}
+	return nil
+}
+
+func (s *DomainStore) SetPrimaryHostnameForSite(ctx context.Context, siteID, hostname, source, ownership string) error {
+	normalizedSiteID, err := idutil.Normalize(siteID)
+	if err != nil {
+		return fmt.Errorf("site_id: %w", err)
+	}
+	normalizedHostname, err := normalizeHostname(hostname)
+	if err != nil {
+		return err
+	}
+	var id string
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM domains WHERE hostname = ? LIMIT 1`, normalizedHostname).Scan(&id)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup site hostname: %w", err)
+	}
+	if err == nil {
+		isPrimary := true
+		_, err := s.Update(ctx, id, UpdateDomainInput{IsPrimary: &isPrimary, SiteID: &normalizedSiteID})
+		return err
+	}
+	_, err = s.Create(ctx, CreateDomainInput{Hostname: normalizedHostname, Kind: DomainKindHostname, Ownership: ownership, Source: source, Status: DomainStatusActive, SiteID: normalizedSiteID, IsPrimary: true})
+	return err
+}
+
+func (s *DomainStore) ClearPrimaryHostnameForSite(ctx context.Context, siteID string) error {
+	normalizedSiteID, err := idutil.Normalize(siteID)
+	if err != nil {
+		return fmt.Errorf("site_id: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin clear primary tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE domains SET is_primary = 0, updated_at = ? WHERE site_id = ?`, time.Now().UTC().Format(time.RFC3339), normalizedSiteID); err != nil {
+		return fmt.Errorf("clear primary hostname: %w", err)
+	}
+	if err := syncLegacySitePrimaryDomainTx(ctx, tx, normalizedSiteID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit clear primary tx: %w", err)
+	}
+	return nil
+}
+
+const domainSelectQuery = `SELECT d.id, d.hostname, d.kind, d.ownership, d.source, d.status,
+	COALESCE(d.site_id, ''), COALESCE(si.name, ''), COALESCE(d.parent_domain_id, ''), COALESCE(parent.hostname, ''),
+	d.is_primary, d.created_at, d.updated_at
+	FROM domains d
+	LEFT JOIN sites si ON si.id = d.site_id
+	LEFT JOIN domains parent ON parent.id = d.parent_domain_id`
+
+func scanDomains(rows *sql.Rows) ([]StoredDomain, error) {
+	var out []StoredDomain
+	for rows.Next() {
+		var domain StoredDomain
+		var isPrimary int
+		if err := rows.Scan(
+			&domain.ID,
+			&domain.Hostname,
+			&domain.Kind,
+			&domain.Ownership,
+			&domain.Source,
+			&domain.Status,
+			&domain.SiteID,
+			&domain.SiteName,
+			&domain.ParentDomainID,
+			&domain.ParentHostname,
+			&isPrimary,
+			&domain.CreatedAt,
+			&domain.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan domain: %w", err)
+		}
+		domain.IsPrimary = isPrimary == 1
+		out = append(out, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate domains: %w", err)
+	}
+	return out, nil
+}
+
+func prepareCreateDomainInput(in CreateDomainInput) (CreateDomainInput, error) {
+	hostname, err := normalizeHostname(in.Hostname)
+	if err != nil {
+		return CreateDomainInput{}, err
+	}
+	in.Hostname = hostname
+	in.Kind = strings.TrimSpace(in.Kind)
+	in.Ownership = strings.TrimSpace(in.Ownership)
+	in.Source = strings.TrimSpace(in.Source)
+	in.Status = strings.TrimSpace(in.Status)
+	in.SiteID = strings.TrimSpace(in.SiteID)
+	in.ParentDomainID = strings.TrimSpace(in.ParentDomainID)
+	if in.Kind == "" {
+		return CreateDomainInput{}, fmt.Errorf("kind is required")
+	}
+	if in.Ownership == "" {
+		return CreateDomainInput{}, fmt.Errorf("ownership is required")
+	}
+	if in.Source == "" {
+		return CreateDomainInput{}, fmt.Errorf("source is required")
+	}
+	if in.Status == "" {
+		in.Status = DomainStatusActive
+	}
+	if _, err := normalizeDomainKind(in.Kind); err != nil {
+		return CreateDomainInput{}, err
+	}
+	if _, err := normalizeDomainOwnership(in.Ownership); err != nil {
+		return CreateDomainInput{}, err
+	}
+	if _, err := normalizeDomainSource(in.Source); err != nil {
+		return CreateDomainInput{}, err
+	}
+	if _, err := normalizeDomainStatus(in.Status); err != nil {
+		return CreateDomainInput{}, err
+	}
+	if in.SiteID != "" {
+		normalized, err := idutil.Normalize(in.SiteID)
+		if err != nil {
+			return CreateDomainInput{}, fmt.Errorf("site_id: %w", err)
+		}
+		in.SiteID = normalized
+	}
+	if in.ParentDomainID != "" {
+		normalized, err := idutil.Normalize(in.ParentDomainID)
+		if err != nil {
+			return CreateDomainInput{}, fmt.Errorf("parent_domain_id: %w", err)
+		}
+		in.ParentDomainID = normalized
+	}
+	if in.Kind == DomainKindBase && (in.SiteID != "" || in.IsPrimary) {
+		return CreateDomainInput{}, fmt.Errorf("base domains cannot be assigned to a site or marked primary")
+	}
+	return in, nil
+}
+
+func prepareUpdateDomainInput(current StoredDomain, in UpdateDomainInput) (CreateDomainInput, error) {
+	prepared := CreateDomainInput{
+		Hostname:       current.Hostname,
+		Kind:           current.Kind,
+		Ownership:      current.Ownership,
+		Source:         current.Source,
+		Status:         current.Status,
+		SiteID:         current.SiteID,
+		ParentDomainID: current.ParentDomainID,
+		IsPrimary:      current.IsPrimary,
+	}
+	if in.Hostname != nil {
+		prepared.Hostname = *in.Hostname
+	}
+	if in.Kind != nil {
+		prepared.Kind = *in.Kind
+	}
+	if in.Ownership != nil {
+		prepared.Ownership = *in.Ownership
+	}
+	if in.Source != nil {
+		prepared.Source = *in.Source
+	}
+	if in.Status != nil {
+		prepared.Status = *in.Status
+	}
+	if in.SiteID != nil {
+		prepared.SiteID = strings.TrimSpace(*in.SiteID)
+	}
+	if in.ParentDomainID != nil {
+		prepared.ParentDomainID = strings.TrimSpace(*in.ParentDomainID)
+	}
+	if in.IsPrimary != nil {
+		prepared.IsPrimary = *in.IsPrimary
+	}
+	return prepareCreateDomainInput(prepared)
+}
+
+func (s *DomainStore) ensureRelations(ctx context.Context, kind, siteID, parentDomainID string) error {
+	if siteID != "" {
+		if err := ensureSiteExists(ctx, s.db, siteID); err != nil {
+			return err
+		}
+	}
+	if parentDomainID != "" {
+		parent, err := s.GetByID(ctx, parentDomainID)
+		if err != nil {
+			return fmt.Errorf("parent_domain_id: %w", err)
+		}
+		if parent.Kind != DomainKindBase {
+			return fmt.Errorf("parent_domain_id must reference a base domain")
+		}
+	}
+	if kind == DomainKindBase && parentDomainID != "" {
+		return fmt.Errorf("base domains cannot have a parent_domain_id")
+	}
+	return nil
+}
+
+func normalizeHostname(raw string) (string, error) {
+	hostname := strings.ToLower(strings.TrimSpace(raw))
+	hostname = strings.TrimSuffix(hostname, ".")
+	if hostname == "" {
+		return "", fmt.Errorf("hostname is required")
+	}
+	if !hostnamePattern.MatchString(hostname) {
+		return "", fmt.Errorf("hostname must be a valid domain name")
+	}
+	return hostname, nil
+}
+
+func normalizeDomainKind(raw string) (string, error) {
+	kind := strings.TrimSpace(raw)
+	switch kind {
+	case DomainKindBase, DomainKindHostname:
+		return kind, nil
+	default:
+		return "", fmt.Errorf("unsupported domain kind %q", raw)
+	}
+}
+
+func normalizeDomainOwnership(raw string) (string, error) {
+	ownership := strings.TrimSpace(raw)
+	switch ownership {
+	case DomainOwnershipPlatform, DomainOwnershipCustomer:
+		return ownership, nil
+	default:
+		return "", fmt.Errorf("unsupported domain ownership %q", raw)
+	}
+}
+
+func normalizeDomainSource(raw string) (string, error) {
+	source := strings.TrimSpace(raw)
+	switch source {
+	case DomainSourceSandbox, DomainSourceCustom, DomainSourceManual, DomainSourceLegacy:
+		return source, nil
+	default:
+		return "", fmt.Errorf("unsupported domain source %q", raw)
+	}
+}
+
+func normalizeDomainStatus(raw string) (string, error) {
+	status := strings.TrimSpace(raw)
+	switch status {
+	case DomainStatusActive, DomainStatusPending, DomainStatusAttention, DomainStatusDisabled:
+		return status, nil
+	default:
+		return "", fmt.Errorf("unsupported domain status %q", raw)
+	}
+}
+
+func ensureSiteExists(ctx context.Context, db *sql.DB, siteID string) error {
+	var exists string
+	if err := db.QueryRowContext(ctx, `SELECT id FROM sites WHERE id = ?`, siteID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("site %s not found", siteID)
+		}
+		return fmt.Errorf("lookup site id: %w", err)
+	}
+	return nil
+}
+
+func shouldPromotePrimaryTx(ctx context.Context, tx *sql.Tx, siteID string) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM domains WHERE site_id = ? AND is_primary = 1`, siteID).Scan(&count); err != nil {
+		return false, fmt.Errorf("count primary domains: %w", err)
+	}
+	return count == 0, nil
+}
+
+func clearPrimaryForSiteTx(ctx context.Context, tx *sql.Tx, siteID, exceptID string) error {
+	query := `UPDATE domains SET is_primary = 0, updated_at = ? WHERE site_id = ?`
+	args := []any{time.Now().UTC().Format(time.RFC3339), siteID}
+	if strings.TrimSpace(exceptID) != "" {
+		query += ` AND id != ?`
+		args = append(args, exceptID)
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("clear site primary domains: %w", err)
+	}
+	return nil
+}
+
+func syncLegacySitePrimaryDomainTx(ctx context.Context, tx *sql.Tx, siteID string) error {
+	if strings.TrimSpace(siteID) == "" {
+		return nil
+	}
+	var hostname sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT hostname FROM domains WHERE site_id = ? AND is_primary = 1 LIMIT 1`, siteID).Scan(&hostname); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup primary domain for site sync: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE sites SET primary_domain = ?, updated_at = updated_at WHERE id = ?`, nullableSiteString(nullStringValue(hostname)), siteID); err != nil {
+		return fmt.Errorf("sync site primary_domain: %w", err)
+	}
+	return nil
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}

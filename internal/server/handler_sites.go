@@ -11,6 +11,7 @@ import (
 
 type sitesHandler struct {
 	store           *SiteStore
+	domainStore     *DomainStore
 	activityStore   *activity.Store
 	activityHandler *activityHandler
 }
@@ -48,6 +49,23 @@ func (sh *sitesHandler) routeWithID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sh.activityHandler.handleSiteActivity(w, r, siteID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "domains" {
+		if sh.domainStore == nil {
+			http.NotFound(w, r)
+			return
+		}
+		dh := &domainsHandler{store: sh.domainStore, activityStore: sh.activityStore}
+		if r.Method == http.MethodGet {
+			dh.handleListBySite(w, r, siteID)
+			return
+		}
+		if r.Method == http.MethodPost {
+			dh.handleCreateForSite(w, r, siteID)
+			return
+		}
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if len(parts) != 1 {
