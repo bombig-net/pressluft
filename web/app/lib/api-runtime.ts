@@ -162,7 +162,6 @@ const storedDomainSchema = z.object({
   hostname: z.string(),
   kind: z.string(),
   ownership: z.string(),
-  source: z.string(),
   status: z.string(),
   site_id: z.string().optional(),
   site_name: z.string().optional(),
