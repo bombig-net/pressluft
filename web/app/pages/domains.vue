@@ -24,37 +24,33 @@ const form = reactive({
   hostname: "",
 });
 
-const baseDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "base"),
-);
-
-const activeBaseDomains = computed(() =>
-  baseDomains.value.filter((domain) => domain.status === "active"),
-);
-
-const pendingBaseDomains = computed(() =>
-  baseDomains.value.filter((domain) => domain.status !== "active"),
-);
-
-const managedDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "hostname"),
-);
+const allDomains = computed(() => domains.value);
 
 const domainStats = computed(() => ({
-  total: managedDomains.value.length,
-  attached: managedDomains.value.filter((domain) => Boolean(domain.site_id)).length,
-  unassigned: managedDomains.value.filter((domain) => !domain.site_id).length,
+  total: allDomains.value.length,
+  attached: allDomains.value.filter((domain) => Boolean(domain.site_id)).length,
+  unassigned: allDomains.value.filter((domain) => !domain.site_id).length,
 }));
 
-const domainKindLabel = (domain: (typeof managedDomains.value)[number]) => {
+const domainKindLabel = (domain: (typeof allDomains.value)[number]) => {
+  if (domain.kind === "base") {
+    return "Temporary URL root";
+  }
   if (domain.parent_domain_id || domain.ownership === "platform") {
     return "Temporary URL";
   }
   return "Domain";
 };
 
-const domainRoleLabel = (domain: (typeof managedDomains.value)[number]) =>
-  domain.is_primary ? "Primary" : "Additional";
+const domainRoleLabel = (domain: (typeof allDomains.value)[number]) => {
+  if (domain.kind === "base") {
+    return domain.status === "active" ? "Active" : "Coming soon";
+  }
+  return domain.is_primary ? "Primary" : "Additional";
+};
+
+const domainOwnershipLabel = (domain: (typeof allDomains.value)[number]) =>
+  domain.ownership === "platform" ? "Platform" : "User";
 
 const loadPage = async () => {
   pageError.value = "";
@@ -158,7 +154,7 @@ onMounted(loadPage);
               <Input v-model="form.hostname" placeholder="www.client-example.com" />
             </div>
             <div class="rounded-2xl border border-border/60 bg-muted/20 p-4 text-sm leading-6 text-muted-foreground">
-              New domains land here as inventory first. Site assignment happens from the site record, while Pressluft-provided temporary URL domains stay in the background.
+              New domains land here as inventory first. Site assignment happens from the site record, and Pressluft-provided temporary URL roots appear in the same list automatically.
             </div>
             <Button type="submit" class="w-full bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !form.hostname.trim()">
               {{ saving ? "Adding domain..." : "Add domain" }}
@@ -175,58 +171,35 @@ onMounted(loadPage);
           </CardHeader>
           <CardContent class="px-6 py-5">
             <div v-if="loading" class="py-10 text-sm text-muted-foreground">Loading domains...</div>
-            <div v-else-if="managedDomains.length === 0" class="rounded-2xl border border-dashed border-border/60 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-               No domains tracked yet.
-            </div>
-            <div v-else class="space-y-3">
-              <div v-for="domain in managedDomains" :key="domain.id" class="rounded-2xl border border-border/60 bg-background/70 p-4">
-                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
-                      <Badge variant="outline" class="border-primary/30 bg-primary/10 text-primary">{{ domainRoleLabel(domain) }}</Badge>
-                      <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domainKindLabel(domain) }}</Badge>
-                    </div>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {{ domain.site_name ? `Attached to ${domain.site_name}` : "Unassigned" }}
-                      <span v-if="domain.parent_hostname"> · via {{ domain.parent_hostname }}</span>
-                    </p>
-                  </div>
-                   <div class="flex items-center gap-3 text-xs text-muted-foreground">
-                      <NuxtLink v-if="domain.site_id" :to="`/sites/${domain.site_id}`" class="font-medium text-accent transition hover:text-accent/80">
-                        Open site
-                      </NuxtLink>
-                    <Button type="button" variant="ghost" size="sm" class="text-destructive hover:bg-destructive/10 hover:text-destructive" @click="handleDelete(domain.id, domain.hostname)">
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card v-if="baseDomains.length > 0" class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
-          <CardHeader class="border-b border-border/50 px-6 py-5">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pressluft URLs</p>
-            <h2 class="mt-1 text-xl font-semibold text-foreground">Platform-provided temporary domains</h2>
-          </CardHeader>
-          <CardContent class="space-y-3 px-6 py-5 text-sm text-muted-foreground">
-            <p>
-              These are preinstalled by Pressluft and used when a site gets a temporary URL. They are shown here for context, not as something operators need to manage day to day.
-            </p>
-            <div class="space-y-3">
-              <div v-if="activeBaseDomains.length" class="flex flex-wrap gap-2">
-                <Badge v-for="domain in activeBaseDomains" :key="domain.id" variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">
-                  {{ domain.hostname }}
-                </Badge>
-              </div>
-              <div v-if="pendingBaseDomains.length" class="flex flex-wrap gap-2">
-                <Badge v-for="domain in pendingBaseDomains" :key="domain.id" variant="outline" class="border-accent/30 bg-accent/10 text-accent">
-                  {{ domain.hostname }} · coming soon
-                </Badge>
-              </div>
-            </div>
+             <div v-else-if="allDomains.length === 0" class="rounded-2xl border border-dashed border-border/60 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
+                No domains tracked yet.
+             </div>
+             <div v-else class="space-y-3">
+              <div v-for="domain in allDomains" :key="domain.id" class="rounded-2xl border border-border/60 bg-background/70 p-4">
+                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                   <div>
+                     <div class="flex flex-wrap items-center gap-2">
+                       <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
+                       <Badge variant="outline" class="border-primary/30 bg-primary/10 text-primary">{{ domainRoleLabel(domain) }}</Badge>
+                       <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domainKindLabel(domain) }}</Badge>
+                       <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domainOwnershipLabel(domain) }}</Badge>
+                     </div>
+                     <p class="mt-1 text-xs text-muted-foreground">
+                       {{ domain.kind === "base" ? "Available for temporary Pressluft URLs" : domain.site_name ? `Attached to ${domain.site_name}` : "Unassigned" }}
+                       <span v-if="domain.parent_hostname"> · via {{ domain.parent_hostname }}</span>
+                     </p>
+                   </div>
+                    <div class="flex items-center gap-3 text-xs text-muted-foreground">
+                       <NuxtLink v-if="domain.site_id" :to="`/sites/${domain.site_id}`" class="font-medium text-accent transition hover:text-accent/80">
+                         Open site
+                       </NuxtLink>
+                    <Button v-if="domain.ownership !== 'platform'" type="button" variant="ghost" size="sm" class="text-destructive hover:bg-destructive/10 hover:text-destructive" @click="handleDelete(domain.id, domain.hostname)">
+                       Delete
+                     </Button>
+                   </div>
+                 </div>
+               </div>
+             </div>
           </CardContent>
         </Card>
       </div>
