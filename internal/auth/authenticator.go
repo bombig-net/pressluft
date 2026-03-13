@@ -27,7 +27,7 @@ func NewDevAuthenticator() *DevAuthenticator {
 		actor: Actor{
 			ID:            "dev-admin",
 			Type:          ActorTypeOperator,
-			Email:         "dev@localhost",
+			Email:         "dev@example.com",
 			Role:          RoleAdmin,
 			Capabilities:  RoleCapabilities(RoleAdmin),
 			Authenticated: true,
