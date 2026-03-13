@@ -14,6 +14,9 @@ fi
 primary_domain=$1
 shift
 
+acme_server=${PRESSLUFT_ACME_CA:-letsencrypt}
+acme_email=${PRESSLUFT_ACME_EMAIL:-}
+
 domain_args="-d $primary_domain"
 for extra_domain in "$@"; do
   domain_args="$domain_args -d $extra_domain"
@@ -22,10 +25,20 @@ done
 cert_dir="/var/lib/pressluft/certs/$primary_domain"
 install -d -o pressluft -g pressluft -m 0750 "$cert_dir"
 
+if [ -n "$acme_email" ]; then
+  runuser -u pressluft -- env HOME=/var/lib/pressluft /var/lib/pressluft/.acme.sh/acme.sh \
+    --register-account \
+    --home /var/lib/pressluft/.acme.sh \
+    --config-home /etc/pressluft/acme.sh \
+    --server "$acme_server" \
+    -m "$acme_email"
+fi
+
 runuser -u pressluft -- env HOME=/var/lib/pressluft /var/lib/pressluft/.acme.sh/acme.sh \
   --issue \
   --home /var/lib/pressluft/.acme.sh \
   --config-home /etc/pressluft/acme.sh \
+  --server "$acme_server" \
   --webroot /var/lib/pressluft/acme-webroot \
   $domain_args
 

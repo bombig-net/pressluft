@@ -13,7 +13,7 @@ func TestDomainStoreCreateListAndPrimaryAssignment(t *testing.T) {
 	domainStore := NewDomainStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 
-	siteID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Northwind", Status: SiteStatusDraft})
+	siteID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Northwind", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -126,11 +126,11 @@ func TestDomainStoreSetPrimaryHostnameForSiteRejectsAttachedHostnameConflict(t *
 	siteStore := NewSiteStore(db)
 	domainStore := NewDomainStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
-	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", PrimaryDomain: "one.example.test", Status: SiteStatusDraft})
+	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", WordPressAdminEmail: "one@example.test", PrimaryDomain: "one.example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create first site: %v", err)
 	}
-	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", Status: SiteStatusDraft})
+	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", WordPressAdminEmail: "two@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create second site: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestDomainStoreDeletePromotesReplacementPrimary(t *testing.T) {
 	siteStore := NewSiteStore(db)
 	domainStore := NewDomainStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
-	siteID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Northwind", Status: SiteStatusDraft})
+	siteID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Northwind", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -199,11 +199,11 @@ func TestDomainStoreMovingPrimaryPromotesReplacementOnPreviousSite(t *testing.T)
 	siteStore := NewSiteStore(db)
 	domainStore := NewDomainStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
-	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", Status: SiteStatusDraft})
+	siteOneID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", WordPressAdminEmail: "one@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create first site: %v", err)
 	}
-	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", Status: SiteStatusDraft})
+	siteTwoID, err := siteStore.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Two", WordPressAdminEmail: "two@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create second site: %v", err)
 	}

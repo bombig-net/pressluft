@@ -83,6 +83,8 @@ func main() {
 	jobStore := orchestrator.NewStore(db.DB)
 	serverStore := server.NewServerStore(db.DB)
 	providerStore := provider.NewStore(db.DB)
+	siteStore := server.NewSiteStore(db.DB)
+	domainStore := server.NewDomainStore(db.DB)
 	activityStore := activity.NewStore(db.DB)
 	agentTokenStore := agentauth.NewStore(db.DB)
 	pkiStore := pki.NewStore(db.DB)
@@ -149,6 +151,8 @@ func main() {
 		jobStore,
 		worker.NewServerStoreAdapter(serverStore),
 		worker.NewProviderStoreAdapter(providerStore),
+		worker.NewSiteStoreAdapter(siteStore),
+		worker.NewDomainStoreAdapter(domainStore),
 		activityStore,
 		ansibleRunner,
 		worker.ExecutorConfig{
@@ -177,6 +181,8 @@ func main() {
 
 	monitor := ws.NewMonitor(hub, serverStore, logger)
 	go monitor.Start(ctx)
+	siteHealthMonitor := server.NewSiteHealthMonitor(siteStore, domainStore, activityStore, hub, logger)
+	go siteHealthMonitor.Start(ctx)
 
 	operatorAuthenticator := operatorAuthenticatorForMode(executionMode, authService)
 	httpServer := &http.Server{

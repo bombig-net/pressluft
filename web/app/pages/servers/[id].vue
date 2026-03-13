@@ -609,6 +609,32 @@ const siteStatusClass = (status: StoredSite["status"]) => {
   }
 };
 
+const siteDeploymentClass = (state: StoredSite["deployment_state"]) => {
+  switch (state) {
+    case "ready":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "failed":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "deploying":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+    default:
+      return "border-border/60 bg-muted/70 text-muted-foreground";
+  }
+};
+
+const siteRuntimeClass = (state: StoredSite["runtime_health_state"]) => {
+  switch (state) {
+    case "healthy":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "issue":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "unknown":
+      return "border-border/60 bg-muted/70 text-muted-foreground";
+    default:
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  }
+};
+
 const retrySetup = async () => {
   if (!serverId.value) return;
   setupRetryState.loading = true;
@@ -1434,13 +1460,9 @@ onUnmounted(() => {
                         server record.
                       </p>
                     </div>
-                    <div class="flex gap-3">
-                      <NuxtLink :to="`/sites?serverId=${serverId}`">
-                        <Button class="rounded-xl bg-accent text-accent-foreground hover:bg-accent/85">
-                          Create site on this server
-                        </Button>
-                      </NuxtLink>
-                    </div>
+                    <p class="text-sm text-muted-foreground">
+                      Create new sites from the top-level `Sites` page, then track their deployment back to this server here.
+                    </p>
                   </div>
 
                   <div
@@ -1486,9 +1508,21 @@ onUnmounted(() => {
                             <Badge variant="outline" :class="siteStatusClass(site.status)">
                               {{ site.status }}
                             </Badge>
+                            <Badge variant="outline" :class="siteDeploymentClass(site.deployment_state)">
+                              {{ site.deployment_state }}
+                            </Badge>
+                            <Badge variant="outline" :class="siteRuntimeClass(site.runtime_health_state)">
+                              {{ site.runtime_health_state }}
+                            </Badge>
                           </div>
                           <p class="mt-1 text-sm text-muted-foreground">
                             {{ site.primary_domain || "No primary hostname recorded" }}
+                          </p>
+                          <p v-if="site.deployment_status_message" class="mt-2 text-xs text-muted-foreground">
+                            {{ site.deployment_status_message }}
+                          </p>
+                          <p v-if="site.runtime_health_status_message" class="mt-1 text-xs text-muted-foreground">
+                            {{ site.runtime_health_status_message }}
                           </p>
                         </div>
                         <svg
@@ -1505,14 +1539,9 @@ onUnmounted(() => {
                           />
                         </svg>
                       </div>
-                      <div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
-                          PHP {{ site.php_version || "TBD" }}
-                        </span>
-                        <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
-                          WordPress {{ site.wordpress_version || "TBD" }}
-                        </span>
-                      </div>
+                      <p class="mt-3 text-xs text-muted-foreground">
+                        Managed WordPress install tracked from the top-level Sites inventory.
+                      </p>
                     </NuxtLink>
                   </div>
                 </div>
@@ -1540,8 +1569,8 @@ onUnmounted(() => {
                     <span class="text-xs text-muted-foreground">
                       {{
                         agentConnected
-                          ? "Jobs will execute via Agent (fast)"
-                          : "Jobs will execute via Ansible (SSH)"
+                          ? "Runtime diagnostics use the agent; provisioning and deploy workflows still run via Ansible over SSH."
+                          : "Provisioning and deploy workflows run via Ansible over SSH; live diagnostics improve when the agent is connected."
                       }}
                     </span>
                   </div>

@@ -26,6 +26,71 @@ import (
 
 var executorTestDB *sql.DB
 
+func TestResolveACMEContactEmailPrefersOperatorWhenUsable(t *testing.T) {
+	executor := &Executor{executionMode: platform.ExecutionModeDev}
+
+	email, err := executor.resolveACMEContactEmail("operator@agency.testable.io", "site-owner@client.testable.io")
+	if err != nil {
+		t.Fatalf("resolve acme contact email: %v", err)
+	}
+	if email != "operator@agency.testable.io" {
+		t.Fatalf("email = %q, want %q", email, "operator@agency.testable.io")
+	}
+}
+
+func TestResolveACMEContactEmailFallsBackToSiteAdminInDev(t *testing.T) {
+	executor := &Executor{executionMode: platform.ExecutionModeDev}
+
+	email, err := executor.resolveACMEContactEmail("dev@example.com", "site-owner@client.testable.io")
+	if err != nil {
+		t.Fatalf("resolve acme contact email: %v", err)
+	}
+	if email != "site-owner@client.testable.io" {
+		t.Fatalf("email = %q, want %q", email, "site-owner@client.testable.io")
+	}
+}
+
+func TestResolveACMEContactEmailRejectsReservedEmailsWithoutFallback(t *testing.T) {
+	executor := &Executor{executionMode: platform.ExecutionModeDev}
+
+	_, err := executor.resolveACMEContactEmail("dev@example.com", "owner@example.test")
+	if err == nil {
+		t.Fatal("expected acme contact email resolution to fail")
+	}
+}
+
+func TestResolveACMEContactEmailRejectsInvalidOperatorInProduction(t *testing.T) {
+	executor := &Executor{executionMode: platform.ExecutionModeProductionBootstrap}
+
+	_, err := executor.resolveACMEContactEmail("dev@example.com", "site-owner@client.testable.io")
+	if err == nil {
+		t.Fatal("expected acme contact email resolution to fail")
+	}
+}
+
+func TestIsUsableACMEContactEmail(t *testing.T) {
+	tests := []struct {
+		name  string
+		email string
+		want  bool
+	}{
+		{name: "real email", email: "hello@agency.pressluft.dev", want: true},
+		{name: "localhost", email: "dev@localhost", want: false},
+		{name: "reserved example", email: "dev@example.com", want: false},
+		{name: "reserved test tld", email: "dev@example.test", want: false},
+		{name: "invalid tld", email: "dev@example.invalid", want: false},
+		{name: "bad format", email: "not-an-email", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUsableACMEContactEmail(tt.email); got != tt.want {
+				t.Fatalf("isUsableACMEContactEmail(%q) = %v, want %v", tt.email, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 	jobStore := mustOpenExecutorJobStore(t)
 	logger := testLogger()
@@ -34,7 +99,7 @@ func TestExecutorDeleteServerSuccessMarksDeleted(t *testing.T) {
 	}}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		PlaybookBasePath: "playbooks",
 	}, logger)
 
@@ -60,7 +125,7 @@ func TestExecutorDeleteServerFailureLeavesRecoverableStatus(t *testing.T) {
 	}}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{filepath.Join("playbooks", "hetzner", "delete.yml"): errors.New("provider delete failed")}}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		PlaybookBasePath: "playbooks",
 	}, logger)
 
@@ -89,7 +154,7 @@ func TestExecutorRebuildServerSuccessReconfiguresAndUpdatesImage(t *testing.T) {
 	}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		PlaybookBasePath:      "playbooks",
 		ConfigurePlaybookPath: "configure.yml",
 		ControlPlaneURL:       "https://control.example.test",
@@ -162,7 +227,7 @@ func TestExecutorRebuildServerRejectsUnavailableProfile(t *testing.T) {
 	}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		PlaybookBasePath:      "playbooks",
 		ConfigurePlaybookPath: "configure.yml",
 		ControlPlaneURL:       "https://control.example.test",
@@ -195,7 +260,7 @@ func TestExecutorResizeServerFailureMarksFailed(t *testing.T) {
 	}}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{filepath.Join("playbooks", "hetzner", "resize.yml"): errors.New("provider resize failed")}}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		PlaybookBasePath: "playbooks",
 	}, logger)
 
@@ -243,7 +308,7 @@ func TestExecutorConfigureServerFailureMarksSetupDegraded(t *testing.T) {
 	}
 	providerStore := &fakeProviderStore{provider: &provider.StoredProvider{ID: "00000000-0000-7000-8000-000000000011", Type: "hetzner", APIToken: "token"}}
 	runner := &fakeRunner{failPlaybooks: map[string]error{"configure.yml": errors.New("configure failed")}}
-	executor := NewExecutor(jobStore, serverStore, providerStore, nil, runner, ExecutorConfig{
+	executor := NewExecutor(jobStore, serverStore, providerStore, nil, nil, nil, runner, ExecutorConfig{
 		ConfigurePlaybookPath: "configure.yml",
 		ControlPlaneURL:       "http://control.example.test",
 		ExecutionMode:         platform.ExecutionModeDev,
