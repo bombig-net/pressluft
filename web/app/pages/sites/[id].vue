@@ -22,7 +22,7 @@ const siteId = computed(() => {
 const { servers, fetchServers } = useServers();
 const { fetchSite, updateSite, deleteSite, saving } = useSites();
 const { activities, listSiteActivity } = useActivity();
-const { fetchDomains, fetchSiteDomains, createSiteDomain, updateDomain, deleteDomain } = useDomains();
+const { fetchSiteDomains, createSiteDomain, updateDomain, deleteDomain } = useDomains();
 
 const site = ref<StoredSite | null>(null);
 const siteDomains = ref<StoredDomain[]>([]);
@@ -31,20 +31,12 @@ const pageError = ref("");
 const successMessage = ref("");
 
 const form = reactive({
-  serverId: "",
   name: "",
-  status: "draft",
-  wordpressPath: "",
-  phpVersion: "",
-  wordpressVersion: "",
 });
 
 const hostnameForm = reactive({
-  source: "fallback_resolver",
+  source: "preview",
   fallbackLabel: "",
-  userMode: "base_domain",
-  baseDomainId: "",
-  userLabel: "",
   hostname: "",
 });
 
@@ -74,16 +66,11 @@ const siteDeploymentMeta = (state: StoredSite["deployment_state"]) => {
   }
 };
 
-const currentServer = computed(() => servers.value.find((server) => server.id === form.serverId) || null);
+const currentServer = computed(() => servers.value.find((server) => server.id === site.value?.server_id) || null);
 const currentServerIPv4 = computed(() => currentServer.value?.ipv4 || "");
 
 const hydrateForm = (value: StoredSite) => {
-  form.serverId = value.server_id;
   form.name = value.name;
-  form.status = value.status;
-  form.wordpressPath = value.wordpress_path || "";
-  form.phpVersion = value.php_version || "";
-  form.wordpressVersion = value.wordpress_version || "";
 };
 
 const formatDate = (iso: string) => {
@@ -109,12 +96,6 @@ const loadActivity = async () => {
   }
 };
 
-const userBaseDomains = ref<StoredDomain[]>([]);
-
-const selectedBaseDomain = computed(() =>
-  userBaseDomains.value.find((domain) => domain.id === hostnameForm.baseDomainId) || null,
-);
-
 const normalizeLabel = (value: string) =>
   value
     .trim()
@@ -131,24 +112,11 @@ const buildFallbackHostname = () => {
   return `${label}.${currentServerIPv4.value.replace(/\./g, "-")}.sslip.io`;
 };
 
-const buildBaseDomainHostname = () => {
-  const label = normalizeLabel(hostnameForm.userLabel);
-  if (!label || !selectedBaseDomain.value) {
-    return "";
-  }
-  return `${label}.${selectedBaseDomain.value.hostname}`;
-};
-
 const refreshDomains = async () => {
   if (!siteId.value) return;
-  const [allDomains, assignedDomains] = await Promise.all([fetchDomains(), fetchSiteDomains(siteId.value)]);
-  userBaseDomains.value = allDomains.filter((domain) => domain.kind === "base_domain" && domain.source === "user");
-  siteDomains.value = assignedDomains;
-  if (!hostnameForm.baseDomainId && userBaseDomains.value[0]) {
-    hostnameForm.baseDomainId = userBaseDomains.value[0].id;
-  }
-  if (!currentServerIPv4.value && hostnameForm.source === "fallback_resolver") {
-    hostnameForm.source = "user";
+  siteDomains.value = await fetchSiteDomains(siteId.value);
+  if (!currentServerIPv4.value && hostnameForm.source === "preview") {
+    hostnameForm.source = "domain";
   }
 };
 
@@ -178,12 +146,7 @@ const handleSave = async () => {
   pageError.value = "";
   try {
     const updated = await updateSite(siteId.value, {
-      server_id: form.serverId,
       name: form.name,
-      status: form.status,
-      wordpress_path: form.wordpressPath,
-      php_version: form.phpVersion,
-      wordpress_version: form.wordpressVersion,
     });
     site.value = updated;
     hydrateForm(updated);
@@ -198,30 +161,22 @@ const handleAssignHostname = async () => {
   if (!siteId.value) return;
   pageError.value = "";
   successMessage.value = "";
-  try {
-    const payload =
-      hostnameForm.source === "fallback_resolver"
+    try {
+      const payload =
+      hostnameForm.source === "preview"
         ? {
             hostname: buildFallbackHostname(),
             source: "fallback_resolver",
             is_primary: siteDomains.value.length === 0,
           }
-        : hostnameForm.userMode === "base_domain"
-          ? {
-              hostname: buildBaseDomainHostname(),
-              source: "user",
-              parent_domain_id: hostnameForm.baseDomainId,
-              is_primary: siteDomains.value.length === 0,
-            }
-          : {
-              hostname: hostnameForm.hostname.trim(),
-              source: "user",
-              is_primary: siteDomains.value.length === 0,
-            };
+        : {
+            hostname: hostnameForm.hostname.trim(),
+            source: "user",
+            is_primary: siteDomains.value.length === 0,
+          };
     const created = await createSiteDomain(siteId.value, payload);
     successMessage.value = `Assigned ${created.hostname}.`;
     hostnameForm.fallbackLabel = "";
-    hostnameForm.userLabel = "";
     hostnameForm.hostname = "";
     await Promise.all([refreshDomains(), loadPage()]);
   } catch (e: any) {
@@ -278,8 +233,8 @@ watch(siteId, async (value, previous) => {
 });
 
 watch(currentServerIPv4, (value) => {
-  if (!value && hostnameForm.source === "fallback_resolver") {
-    hostnameForm.source = "user";
+  if (!value && hostnameForm.source === "preview") {
+    hostnameForm.source = "domain";
   }
 });
 </script>
@@ -306,12 +261,12 @@ watch(currentServerIPv4, (value) => {
 
           <div class="grid grid-cols-2 gap-3 sm:min-w-[360px]">
             <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur">
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">PHP</p>
-              <p class="mt-2 text-2xl font-semibold">{{ site.php_version || "TBD" }}</p>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">Hostname</p>
+              <p class="mt-2 text-lg font-semibold">{{ site.primary_domain || "Pending" }}</p>
             </div>
             <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur">
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">WordPress</p>
-              <p class="mt-2 text-2xl font-semibold">{{ site.wordpress_version || "TBD" }}</p>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">Install</p>
+              <p class="mt-2 text-lg font-semibold">Managed baseline</p>
             </div>
           </div>
         </div>
@@ -325,48 +280,23 @@ watch(currentServerIPv4, (value) => {
       </Alert>
 
       <div class="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
-          <CardHeader class="border-b border-border/50 px-6 py-5">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Metadata</p>
-            <h2 class="mt-1 text-xl font-semibold text-foreground">Edit site profile</h2>
-          </CardHeader>
-          <CardContent class="px-6 py-5">
-            <form class="space-y-4" @submit.prevent="handleSave">
-              <div class="grid gap-4 sm:grid-cols-2">
-                <div class="space-y-1.5 sm:col-span-2">
+          <Card class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
+            <CardHeader class="border-b border-border/50 px-6 py-5">
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Site</p>
+              <h2 class="mt-1 text-xl font-semibold text-foreground">Basic site details</h2>
+            </CardHeader>
+            <CardContent class="px-6 py-5">
+              <form class="space-y-4" @submit.prevent="handleSave">
+                <div class="space-y-1.5">
                   <Label class="text-sm font-medium text-muted-foreground">Site name</Label>
                   <Input v-model="form.name" />
                 </div>
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">Lifecycle state</Label>
-                  <select v-model="form.status" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
-                    <option value="draft">Draft</option>
-                    <option value="active">Active</option>
-                    <option value="attention">Attention</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </div>
-                <div class="space-y-1.5 sm:col-span-2">
-                  <Label class="text-sm font-medium text-muted-foreground">Current server</Label>
-                  <select v-model="form.serverId" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
-                    <option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option>
-                  </select>
-                </div>
-                <div class="space-y-1.5 sm:col-span-2">
-                  <Label class="text-sm font-medium text-muted-foreground">WordPress path</Label>
-                  <Input v-model="form.wordpressPath" placeholder="/srv/www/client/current" />
-                </div>
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">PHP version</Label>
-                  <Input v-model="form.phpVersion" />
-                </div>
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">WordPress version</Label>
-                  <Input v-model="form.wordpressVersion" />
-                </div>
-              </div>
 
-              <div class="flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:justify-between">
+                <div class="rounded-2xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
+                  Pressluft keeps the install path, PHP version, WordPress version, and deployment contract under managed defaults during this first live deployment phase.
+                </div>
+
+                <div class="flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:justify-between">
                 <Button type="button" variant="ghost" class="justify-start text-destructive hover:bg-destructive/10 hover:text-destructive" @click="handleDelete">Delete site record</Button>
                 <Button type="submit" class="bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving">{{ saving ? "Saving..." : "Save changes" }}</Button>
               </div>
@@ -408,13 +338,13 @@ watch(currentServerIPv4, (value) => {
                       <div class="flex flex-wrap items-center gap-2">
                         <p class="text-sm font-semibold text-foreground">{{ domain.hostname }}</p>
                         <Badge v-if="domain.is_primary" variant="outline" class="border-primary/30 bg-primary/10 text-primary">Primary</Badge>
-                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.source === 'fallback_resolver' ? 'Fallback resolver' : domain.parent_domain_id ? 'Child hostname' : 'Exact hostname' }}</Badge>
+                        <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">{{ domain.source === 'fallback_resolver' ? 'Preview URL' : domain.parent_domain_id ? 'Child hostname' : 'Exact hostname' }}</Badge>
                         <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">DNS {{ domain.dns_state }}</Badge>
                         <Badge variant="outline" class="border-border/60 bg-muted/40 text-muted-foreground">Routing {{ domain.routing_state }}</Badge>
                       </div>
                        <p class="mt-1 text-xs text-muted-foreground">
-                         {{ domain.parent_hostname || (domain.source === "fallback_resolver" ? "Generated from the current server IP via sslip.io." : "User-managed hostname record.") }}
-                       </p>
+                          {{ domain.parent_hostname || (domain.source === "fallback_resolver" ? "Pressluft generated this preview URL from the current server IP." : "User-managed hostname record.") }}
+                        </p>
                        <p v-if="domain.routing_status_message || domain.dns_status_message" class="mt-2 text-xs text-muted-foreground">
                          {{ domain.routing_status_message || domain.dns_status_message }}
                        </p>
@@ -431,56 +361,31 @@ watch(currentServerIPv4, (value) => {
                 <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Attach hostname</p>
                 <div class="mt-4 space-y-4">
                   <div class="space-y-1.5">
-                    <Label class="text-sm font-medium text-muted-foreground">Hostname source</Label>
+                    <Label class="text-sm font-medium text-muted-foreground">Destination</Label>
                     <select v-model="hostnameForm.source" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
-                      <option value="fallback_resolver" :disabled="!currentServerIPv4">Fallback resolver hostname (sslip.io-style)</option>
-                      <option value="user">User-added domain/base domain</option>
+                      <option value="preview" :disabled="!currentServerIPv4">Preview URL</option>
+                      <option value="domain">Exact hostname</option>
                     </select>
                   </div>
 
-                  <template v-if="hostnameForm.source === 'fallback_resolver'">
+                  <template v-if="hostnameForm.source === 'preview'">
                     <div class="space-y-1.5">
-                      <Label class="text-sm font-medium text-muted-foreground">Hostname label</Label>
+                      <Label class="text-sm font-medium text-muted-foreground">Preview label</Label>
                       <Input v-model="hostnameForm.fallbackLabel" placeholder="preview" />
                     </div>
                     <div class="space-y-1.5">
-                      <Label class="text-sm font-medium text-muted-foreground">Result</Label>
+                      <Label class="text-sm font-medium text-muted-foreground">Preview URL</Label>
                       <Input :model-value="buildFallbackHostname()" readonly placeholder="Current server needs an IPv4 address" />
                     </div>
                     <Alert class="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200">
                       <AlertDescription>
-                        Fallback resolver hostnames are fine for onboarding and evaluation, but they are not recommended for production.
+                        Preview URLs are fine for onboarding and evaluation, but they are not recommended for production.
                       </AlertDescription>
                     </Alert>
                   </template>
 
                   <template v-else>
                     <div class="space-y-1.5">
-                      <Label class="text-sm font-medium text-muted-foreground">User domain path</Label>
-                      <select v-model="hostnameForm.userMode" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
-                        <option value="base_domain">Mint from a reusable base domain</option>
-                        <option value="hostname">Use an exact manual hostname</option>
-                      </select>
-                    </div>
-                    <div v-if="hostnameForm.userMode === 'base_domain'" class="grid gap-4 sm:grid-cols-2">
-                      <div class="space-y-1.5">
-                        <Label class="text-sm font-medium text-muted-foreground">Base domain</Label>
-                        <select v-model="hostnameForm.baseDomainId" class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40">
-                          <option v-for="domain in userBaseDomains" :key="domain.id" :value="domain.id">
-                            {{ domain.hostname }} ({{ domain.dns_state }})
-                          </option>
-                        </select>
-                      </div>
-                      <div class="space-y-1.5">
-                        <Label class="text-sm font-medium text-muted-foreground">Hostname label</Label>
-                        <Input v-model="hostnameForm.userLabel" placeholder="staging" />
-                      </div>
-                      <div class="space-y-1.5 sm:col-span-2">
-                        <Label class="text-sm font-medium text-muted-foreground">Result</Label>
-                        <Input :model-value="buildBaseDomainHostname()" readonly placeholder="Choose a base domain and enter a label" />
-                      </div>
-                    </div>
-                    <div v-else class="space-y-1.5">
                       <Label class="text-sm font-medium text-muted-foreground">Exact hostname</Label>
                       <Input v-model="hostnameForm.hostname" placeholder="www.client-example.com" />
                     </div>
@@ -489,7 +394,7 @@ watch(currentServerIPv4, (value) => {
                 <Button
                   type="button"
                   class="mt-4 bg-accent text-accent-foreground hover:bg-accent/85"
-                  :disabled="saving || (hostnameForm.source === 'fallback_resolver' ? !buildFallbackHostname() : hostnameForm.userMode === 'base_domain' ? !buildBaseDomainHostname() : !hostnameForm.hostname.trim())"
+                  :disabled="saving || (hostnameForm.source === 'preview' ? !buildFallbackHostname() : !hostnameForm.hostname.trim())"
                   @click="handleAssignHostname"
                 >
                   Add hostname
@@ -508,9 +413,9 @@ watch(currentServerIPv4, (value) => {
                 <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Server</p>
                 <p class="mt-2 text-lg font-semibold text-foreground">{{ currentServer?.name || site.server_name }}</p>
                 <p class="mt-1 text-sm text-muted-foreground">
-                  This relationship stays explicit so future routing and deployment work has a clear target.
+                  Sites stay top-level resources, but the current hosting target remains explicit while deployment is still server-bound.
                 </p>
-                <NuxtLink :to="`/servers/${form.serverId}?tab=sites`" class="mt-4 inline-flex text-sm font-medium text-accent transition hover:text-accent/80">Open server view</NuxtLink>
+                <NuxtLink :to="`/servers/${site.server_id}?tab=sites`" class="mt-4 inline-flex text-sm font-medium text-accent transition hover:text-accent/80">Open server view</NuxtLink>
               </div>
               <div class="grid grid-cols-2 gap-3 text-sm">
                 <div class="rounded-2xl border border-border/60 bg-muted/20 p-4">

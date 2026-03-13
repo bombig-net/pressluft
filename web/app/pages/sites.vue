@@ -3,35 +3,32 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useDomains } from "~/composables/useDomains";
 import { useServers } from "~/composables/useServers";
 import { useSites, type StoredSite } from "~/composables/useSites";
 
 const route = useRoute();
+const router = useRouter();
 
 const { servers, fetchServers } = useServers();
-const { domains, fetchDomains } = useDomains();
-const { sites, loading, saving, error, fetchSites, createSite } = useSites();
+const { sites, loading, error, fetchSites } = useSites();
 
 const pageError = ref("");
 const successMessage = ref("");
+const createDialogOpen = ref(false);
 
-const form = reactive({
-  serverId: "",
-  name: "",
-  status: "draft",
-  wordpressPath: "/srv/www/",
-  phpVersion: "8.3",
-  wordpressVersion: "6.8",
-  hostnameSource: "fallback_resolver",
-  fallbackLabel: "",
-  userDomainMode: "base_domain",
-  baseDomainId: "",
-  userDomainLabel: "",
-  exactHostname: "",
+const initialServerId = computed(() => {
+  const value = route.query.serverId;
+  return typeof value === "string" ? value.trim() : "";
 });
+
+const deployableServers = computed(() =>
+  servers.value.filter(
+    (server) =>
+      server.status === "ready" &&
+      server.setup_state === "ready" &&
+      server.profile_key === "nginx-stack",
+  ),
+);
 
 const siteStatusMeta = (status: StoredSite["status"]) => {
   switch (status) {
@@ -63,132 +60,25 @@ const siteStats = computed(() => {
   const items = sites.value;
   return {
     total: items.length,
-    active: items.filter((site) => site.status === "active").length,
-    draft: items.filter((site) => site.status === "draft").length,
-    attention: items.filter((site) => site.status === "attention").length,
+    live: items.filter((site) => site.deployment_state === "ready").length,
+    deploying: items.filter((site) => site.deployment_state === "deploying").length,
+    needsAttention: items.filter((site) => site.deployment_state === "failed" || site.status === "attention").length,
   };
-});
-
-const serverOptions = computed(() => [...servers.value].sort((a, b) => a.name.localeCompare(b.name)));
-const selectedServer = computed(() => serverOptions.value.find((server) => server.id === form.serverId) || null);
-const selectedServerName = computed(() => selectedServer.value?.name || "Pick a server");
-const selectedServerIPv4 = computed(() => selectedServer.value?.ipv4 || "");
-
-const userBaseDomains = computed(() =>
-  domains.value.filter((domain) => domain.kind === "base_domain" && domain.source === "user"),
-);
-
-const selectedBaseDomain = computed(() =>
-  userBaseDomains.value.find((domain) => domain.id === form.baseDomainId) || null,
-);
-
-const normalizeLabel = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, "-")
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-const buildFallbackHostname = () => {
-  const label = normalizeLabel(form.fallbackLabel);
-  if (!label || !selectedServerIPv4.value) {
-    return "";
-  }
-  return `${label}.${selectedServerIPv4.value.replace(/\./g, "-")}.sslip.io`;
-};
-
-const buildBaseDomainHostname = () => {
-  const label = normalizeLabel(form.userDomainLabel);
-  if (!label || !selectedBaseDomain.value) {
-    return "";
-  }
-  return `${label}.${selectedBaseDomain.value.hostname}`;
-};
-
-const canCreateSite = computed(() => {
-  if (!form.serverId || !form.name.trim()) {
-    return false;
-  }
-  if (form.hostnameSource === "fallback_resolver") {
-    return Boolean(buildFallbackHostname());
-  }
-  if (form.userDomainMode === "base_domain") {
-    return Boolean(buildBaseDomainHostname() && form.baseDomainId);
-  }
-  return Boolean(form.exactHostname.trim());
 });
 
 const loadPage = async () => {
   pageError.value = "";
   try {
-    await Promise.all([fetchServers(), fetchSites(), fetchDomains()]);
-    const requestedServer = route.query.serverId;
-    if (typeof requestedServer === "string" && requestedServer.trim()) {
-      form.serverId = requestedServer.trim();
-    }
-    if (!form.serverId && serverOptions.value[0]) {
-      form.serverId = serverOptions.value[0].id;
-    }
-    if (!form.baseDomainId && userBaseDomains.value[0]) {
-      form.baseDomainId = userBaseDomains.value[0].id;
-    }
-    if (!selectedServerIPv4.value) {
-      form.hostnameSource = "user";
-    }
+    await Promise.all([fetchServers(), fetchSites()]);
   } catch (e: any) {
     pageError.value = e.message || "Failed to load sites";
   }
 };
 
-const resetForm = () => {
-  form.name = "";
-  form.status = "draft";
-  form.wordpressPath = "/srv/www/";
-  form.phpVersion = "8.3";
-  form.wordpressVersion = "6.8";
-  form.fallbackLabel = "";
-  form.userDomainLabel = "";
-  form.exactHostname = "";
-  form.userDomainMode = "base_domain";
-  form.baseDomainId = userBaseDomains.value[0]?.id || "";
-  form.hostnameSource = selectedServerIPv4.value ? "fallback_resolver" : "user";
-};
-
-const handleCreateSite = async () => {
-  successMessage.value = "";
-  pageError.value = "";
-  try {
-    const created = await createSite({
-      server_id: form.serverId,
-      name: form.name,
-      status: form.status,
-      wordpress_path: form.wordpressPath || undefined,
-      php_version: form.phpVersion || undefined,
-      wordpress_version: form.wordpressVersion || undefined,
-      primary_hostname_config:
-        form.hostnameSource === "fallback_resolver"
-          ? {
-              source: "fallback_resolver",
-              label: form.fallbackLabel,
-            }
-          : form.userDomainMode === "base_domain"
-            ? {
-                source: "user",
-                label: form.userDomainLabel,
-                domain_id: form.baseDomainId,
-              }
-            : {
-                source: "user",
-                hostname: form.exactHostname,
-              },
-    });
-    successMessage.value = `Created ${created.name} on ${created.server_name} with ${created.primary_domain}.`;
-    resetForm();
-    await fetchSites();
-  } catch (e: any) {
-    pageError.value = e.message || "Failed to create site";
-  }
+const handleCreated = async (site: StoredSite) => {
+  successMessage.value = `Created ${site.name}. Deployment is now running.`;
+  await fetchSites();
+  await router.push(`/sites/${site.id}`);
 };
 
 const formatDate = (iso: string) => {
@@ -204,27 +94,6 @@ const formatDate = (iso: string) => {
 };
 
 onMounted(loadPage);
-
-watch(
-  () => route.query.serverId,
-  (value) => {
-    if (typeof value === "string" && value.trim()) {
-      form.serverId = value.trim();
-    }
-  },
-);
-
-watch(selectedServerIPv4, (value) => {
-  if (!value && form.hostnameSource === "fallback_resolver") {
-    form.hostnameSource = "user";
-  }
-});
-
-watch(userBaseDomains, (value) => {
-  if (!value.some((domain) => domain.id === form.baseDomainId)) {
-    form.baseDomainId = value[0]?.id || "";
-  }
-});
 </script>
 
 <template>
@@ -236,14 +105,22 @@ watch(userBaseDomains, (value) => {
       <div class="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
         <div class="max-w-3xl space-y-4">
           <div class="inline-flex items-center gap-2 rounded-full border border-foreground/10 bg-background/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground backdrop-blur">
-            Sites Inventory
+            Sites
           </div>
           <div>
             <h1 class="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Track each WordPress site with the hostname path it will really use.
+              Create WordPress sites without exposing the deploy contract.
             </h1>
             <p class="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-              Choose either a fallback resolver hostname for onboarding and evaluation, or a user-managed domain path that matches production reality.
+              Start with a site name, a ready server, and either a preview URL or the real hostname. Pressluft handles the rest.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <Button class="rounded-xl bg-accent text-accent-foreground hover:bg-accent/85" @click="createDialogOpen = true">
+              Create Site
+            </Button>
+            <p class="self-center text-sm text-muted-foreground">
+              {{ deployableServers.length }} ready {{ deployableServers.length === 1 ? "server" : "servers" }} available for deployment
             </p>
           </div>
         </div>
@@ -254,12 +131,12 @@ watch(userBaseDomains, (value) => {
             <p class="mt-3 text-3xl font-semibold text-foreground">{{ siteStats.total }}</p>
           </div>
           <div class="rounded-2xl border border-primary/20 bg-primary/10 px-4 py-4">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">Active</p>
-            <p class="mt-3 text-3xl font-semibold text-primary">{{ siteStats.active }}</p>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">Live</p>
+            <p class="mt-3 text-3xl font-semibold text-primary">{{ siteStats.live }}</p>
           </div>
           <div class="rounded-2xl border border-accent/20 bg-accent/10 px-4 py-4">
-            <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent/80">Attention</p>
-            <p class="mt-3 text-3xl font-semibold text-accent">{{ siteStats.attention }}</p>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent/80">Deploying</p>
+            <p class="mt-3 text-3xl font-semibold text-accent">{{ siteStats.deploying }}</p>
           </div>
         </div>
       </div>
@@ -273,211 +150,78 @@ watch(userBaseDomains, (value) => {
       <AlertDescription>{{ successMessage }}</AlertDescription>
     </Alert>
 
-    <div class="grid gap-6 xl:grid-cols-[1.4fr_minmax(360px,0.9fr)]">
-      <Card class="overflow-hidden rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
-        <CardHeader class="border-b border-border/50 px-6 py-5">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Inventory</p>
-              <h2 class="mt-1 text-xl font-semibold text-foreground">Managed sites</h2>
-            </div>
-            <Badge variant="outline" class="border-border/60 bg-muted/50 text-xs text-muted-foreground">
-              {{ siteStats.draft }} drafts
-            </Badge>
+    <Card class="overflow-hidden rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
+      <CardHeader class="border-b border-border/50 px-6 py-5">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Inventory</p>
+            <h2 class="mt-1 text-xl font-semibold text-foreground">Managed sites</h2>
           </div>
-        </CardHeader>
-        <CardContent class="px-6 py-5">
-          <div v-if="loading" class="flex items-center justify-center py-16 text-sm text-muted-foreground">Loading sites...</div>
+          <Badge variant="outline" class="border-border/60 bg-muted/50 text-xs text-muted-foreground">
+            {{ siteStats.needsAttention }} need attention
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent class="px-6 py-5">
+        <div v-if="loading" class="flex items-center justify-center py-16 text-sm text-muted-foreground">Loading sites...</div>
 
-          <div v-else-if="sites.length === 0" class="rounded-3xl border border-dashed border-border/60 bg-muted/20 px-6 py-16 text-center">
-            <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-background/80 shadow-sm">
-              <svg class="h-8 w-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9" />
-              </svg>
-            </div>
-            <h3 class="mt-5 text-xl font-semibold text-foreground">No sites tracked yet</h3>
-            <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              Start with one site record and choose a hostname source that matches how you plan to bring it online.
-            </p>
+        <div v-else-if="sites.length === 0" class="rounded-3xl border border-dashed border-border/60 bg-muted/20 px-6 py-16 text-center">
+          <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-background/80 shadow-sm">
+            <svg class="h-8 w-8 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9" />
+            </svg>
           </div>
-
-          <div v-else class="space-y-4">
-            <NuxtLink
-              v-for="site in sites"
-              :key="site.id"
-              :to="`/sites/${site.id}`"
-              class="group block rounded-[22px] border border-border/60 bg-background/70 px-5 py-4 transition-transform duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_18px_50px_-28px_rgba(21,95,84,0.4)]"
-            >
-              <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div class="min-w-0">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <h3 class="truncate text-lg font-semibold text-foreground">{{ site.name }}</h3>
-                    <Badge variant="outline" :class="siteStatusMeta(site.status).className">
-                      {{ siteStatusMeta(site.status).label }}
-                    </Badge>
-                    <Badge variant="outline" :class="siteDeploymentMeta(site.deployment_state).className">
-                      {{ siteDeploymentMeta(site.deployment_state).label }}
-                    </Badge>
-                  </div>
-                  <p class="mt-1 text-sm text-muted-foreground">{{ site.primary_domain || "No primary hostname yet" }}</p>
-                  <p v-if="site.deployment_status_message" class="mt-2 text-sm text-muted-foreground">
-                    {{ site.deployment_status_message }}
-                  </p>
-                  <div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">{{ site.server_name }}</span>
-                    <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">PHP {{ site.php_version || "TBD" }}</span>
-                    <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">WordPress {{ site.wordpress_version || "TBD" }}</span>
-                    <span v-if="site.wordpress_path" class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">{{ site.wordpress_path }}</span>
-                  </div>
-                </div>
-
-                <div class="shrink-0 text-sm text-muted-foreground lg:text-right">
-                  <p class="font-medium text-foreground">Open site record</p>
-                  <p class="mt-1">Created {{ formatDate(site.created_at) }}</p>
-                </div>
-              </div>
-            </NuxtLink>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card class="rounded-[24px] border border-border/60 bg-card/70 py-0 shadow-none">
-        <CardHeader class="border-b border-border/50 px-6 py-5">
-          <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">New Site</p>
-          <h2 class="mt-1 text-xl font-semibold text-foreground">Create a site with its primary hostname</h2>
-          <p class="mt-2 text-sm leading-6 text-muted-foreground">
-            Capture the site record first, then choose whether it starts on a fallback resolver hostname or a user-managed domain path.
+          <h3 class="mt-5 text-xl font-semibold text-foreground">No sites tracked yet</h3>
+          <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            Create the first managed WordPress site with a preview URL or a real hostname.
           </p>
-        </CardHeader>
-        <CardContent class="px-6 py-5">
-          <form class="space-y-4" @submit.prevent="handleCreateSite">
-            <div class="space-y-1.5">
-              <Label for="site-server" class="text-sm font-medium text-muted-foreground">Current server</Label>
-              <select
-                id="site-server"
-                v-model="form.serverId"
-                class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-              >
-                <option v-for="server in serverOptions" :key="server.id" :value="server.id">{{ server.name }}</option>
-              </select>
-              <p class="text-xs text-muted-foreground">Attached to {{ selectedServerName }} today, with room for future moves and routing changes.</p>
-            </div>
+          <Button class="mt-6 rounded-xl bg-accent text-accent-foreground hover:bg-accent/85" @click="createDialogOpen = true">
+            Create Site
+          </Button>
+        </div>
 
-            <div class="grid gap-4 sm:grid-cols-2">
-              <div class="space-y-1.5 sm:col-span-2">
-                <Label for="site-name" class="text-sm font-medium text-muted-foreground">Site name</Label>
-                <Input id="site-name" v-model="form.name" placeholder="e.g. Northwind Marketing" />
+        <div v-else class="space-y-4">
+          <NuxtLink
+            v-for="site in sites"
+            :key="site.id"
+            :to="`/sites/${site.id}`"
+            class="group block rounded-[22px] border border-border/60 bg-background/70 px-5 py-4 transition-transform duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_18px_50px_-28px_rgba(21,95,84,0.4)]"
+          >
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="truncate text-lg font-semibold text-foreground">{{ site.name }}</h3>
+                  <Badge variant="outline" :class="siteStatusMeta(site.status).className">
+                    {{ siteStatusMeta(site.status).label }}
+                  </Badge>
+                  <Badge variant="outline" :class="siteDeploymentMeta(site.deployment_state).className">
+                    {{ siteDeploymentMeta(site.deployment_state).label }}
+                  </Badge>
+                </div>
+                <p class="mt-1 text-sm text-muted-foreground">{{ site.primary_domain || "No primary hostname yet" }}</p>
+                <p v-if="site.deployment_status_message" class="mt-2 text-sm text-muted-foreground">
+                  {{ site.deployment_status_message }}
+                </p>
+                <div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">{{ site.server_name }}</span>
+                </div>
               </div>
-              <div class="space-y-1.5">
-                <Label for="site-status" class="text-sm font-medium text-muted-foreground">Lifecycle state</Label>
-                <select
-                  id="site-status"
-                  v-model="form.status"
-                  class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-                >
-                  <option value="draft">Draft</option>
-                  <option value="active">Active</option>
-                  <option value="attention">Attention</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </div>
-              <div class="space-y-1.5 sm:col-span-2">
-                <Label for="site-path" class="text-sm font-medium text-muted-foreground">WordPress path</Label>
-                <Input id="site-path" v-model="form.wordpressPath" placeholder="/srv/www/client/current" />
-              </div>
-              <div class="space-y-1.5">
-                <Label for="site-php" class="text-sm font-medium text-muted-foreground">PHP version</Label>
-                <Input id="site-php" v-model="form.phpVersion" placeholder="8.3" />
-              </div>
-              <div class="space-y-1.5">
-                <Label for="site-wp" class="text-sm font-medium text-muted-foreground">WordPress version</Label>
-                <Input id="site-wp" v-model="form.wordpressVersion" placeholder="6.8" />
+
+              <div class="shrink-0 text-sm text-muted-foreground lg:text-right">
+                <p class="font-medium text-foreground">Open site record</p>
+                <p class="mt-1">Created {{ formatDate(site.created_at) }}</p>
               </div>
             </div>
+          </NuxtLink>
+        </div>
+      </CardContent>
+    </Card>
 
-            <div class="space-y-4 rounded-2xl border border-border/60 bg-muted/25 p-4">
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Primary Hostname</p>
-
-              <div class="space-y-1.5">
-                <Label class="text-sm font-medium text-muted-foreground">Hostname source</Label>
-                <select
-                  v-model="form.hostnameSource"
-                  class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-                >
-                  <option value="fallback_resolver" :disabled="!selectedServerIPv4">Fallback resolver hostname (sslip.io-style)</option>
-                  <option value="user">User-added domain/base domain</option>
-                </select>
-              </div>
-
-              <template v-if="form.hostnameSource === 'fallback_resolver'">
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">Hostname label</Label>
-                  <Input v-model="form.fallbackLabel" placeholder="northwind-preview" />
-                </div>
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">Result</Label>
-                  <Input :model-value="buildFallbackHostname()" readonly placeholder="Select a server with IPv4 and enter a label" />
-                </div>
-                <Alert class="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200">
-                  <AlertDescription>
-                    Fallback resolver hostnames are useful for onboarding, development, and evaluation, but they are not recommended for production.
-                  </AlertDescription>
-                </Alert>
-              </template>
-
-              <template v-else>
-                <div class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">User domain path</Label>
-                  <select
-                    v-model="form.userDomainMode"
-                    class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-                  >
-                    <option value="base_domain">Mint from a reusable base domain</option>
-                    <option value="hostname">Use an exact manual hostname</option>
-                  </select>
-                </div>
-
-                <div v-if="form.userDomainMode === 'base_domain'" class="grid gap-4 sm:grid-cols-2">
-                  <div class="space-y-1.5">
-                    <Label class="text-sm font-medium text-muted-foreground">Base domain</Label>
-                    <select
-                      v-model="form.baseDomainId"
-                      class="flex h-10 w-full rounded-lg border border-border/60 bg-background/70 px-3 text-sm text-foreground outline-none transition focus:border-accent/40"
-                    >
-                      <option v-for="domain in userBaseDomains" :key="domain.id" :value="domain.id">
-                        {{ domain.hostname }} ({{ domain.dns_state }})
-                      </option>
-                    </select>
-                  </div>
-                  <div class="space-y-1.5">
-                    <Label class="text-sm font-medium text-muted-foreground">Hostname label</Label>
-                    <Input v-model="form.userDomainLabel" placeholder="northwind-live" />
-                  </div>
-                  <div class="space-y-1.5 sm:col-span-2">
-                    <Label class="text-sm font-medium text-muted-foreground">Result</Label>
-                    <Input :model-value="buildBaseDomainHostname()" readonly placeholder="Choose a base domain and enter a label" />
-                  </div>
-                  <p class="sm:col-span-2 text-sm text-muted-foreground">
-                    Reusable base domains are first-class inventory records. Wildcard-ready domains can mint child hostnames later, while still keeping DNS readiness visible.
-                  </p>
-                </div>
-
-                <div v-else class="space-y-1.5">
-                  <Label class="text-sm font-medium text-muted-foreground">Exact hostname</Label>
-                  <Input v-model="form.exactHostname" placeholder="www.client-example.com" />
-                  <p class="text-sm text-muted-foreground">
-                    Use this when the site needs a manually managed concrete hostname instead of a reusable base domain.
-                  </p>
-                </div>
-              </template>
-            </div>
-
-            <Button type="submit" class="w-full rounded-xl bg-accent text-accent-foreground hover:bg-accent/85" :disabled="saving || !canCreateSite">
-              {{ saving ? "Creating site..." : "Create and deploy site" }}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <CreateSiteDialog
+      v-model:open="createDialogOpen"
+      :servers="servers"
+      :initial-server-id="initialServerId"
+      @created="handleCreated"
+    />
   </div>
 </template>

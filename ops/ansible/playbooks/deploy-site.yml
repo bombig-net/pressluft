@@ -132,6 +132,28 @@
         - key: home
         - key: siteurl
 
+    - name: Install and activate Redis Cache plugin
+      become_user: www-data
+      ansible.builtin.command:
+        cmd: >-
+          wp --path={{ site_public_path }} --allow-root plugin install redis-cache
+          --activate --force
+
+    - name: Enable Redis object cache
+      become_user: www-data
+      ansible.builtin.command:
+        cmd: wp --path={{ site_public_path }} --allow-root redis enable --force
+
+    - name: Remove stock WordPress plugins when present
+      become_user: www-data
+      ansible.builtin.command:
+        cmd: wp --path={{ site_public_path }} --allow-root plugin delete {{ item }}
+      loop:
+        - akismet
+        - hello
+      failed_when: false
+      changed_when: false
+
     - name: Render nginx site config with default TLS
       ansible.builtin.template:
         src: site-nginx.conf.j2

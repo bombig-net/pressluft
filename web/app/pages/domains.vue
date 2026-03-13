@@ -40,7 +40,7 @@ const domainKindLabel = (domain: (typeof allDomains.value)[number]) =>
   domain.kind === "base_domain" ? "Reusable base domain" : "Hostname";
 
 const domainSourceLabel = (domain: (typeof allDomains.value)[number]) =>
-  domain.source === "fallback_resolver" ? "Fallback resolver" : "User-managed";
+  domain.source === "fallback_resolver" ? "Preview URL" : "User-managed";
 
 const dnsStateLabel = (state: string) => {
   switch (state) {

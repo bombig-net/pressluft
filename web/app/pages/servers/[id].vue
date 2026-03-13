@@ -1447,13 +1447,9 @@ onUnmounted(() => {
                         server record.
                       </p>
                     </div>
-                    <div class="flex gap-3">
-                      <NuxtLink :to="`/sites?serverId=${serverId}`">
-                        <Button class="rounded-xl bg-accent text-accent-foreground hover:bg-accent/85">
-                          Create site on this server
-                        </Button>
-                      </NuxtLink>
-                    </div>
+                    <p class="text-sm text-muted-foreground">
+                      Create new sites from the top-level `Sites` page, then track their deployment back to this server here.
+                    </p>
                   </div>
 
                   <div
@@ -1524,14 +1520,9 @@ onUnmounted(() => {
                           />
                         </svg>
                       </div>
-                      <div class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
-                          PHP {{ site.php_version || "TBD" }}
-                        </span>
-                        <span class="rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
-                          WordPress {{ site.wordpress_version || "TBD" }}
-                        </span>
-                      </div>
+                      <p class="mt-3 text-xs text-muted-foreground">
+                        Managed WordPress install tracked from the top-level Sites inventory.
+                      </p>
                     </NuxtLink>
                   </div>
                 </div>
