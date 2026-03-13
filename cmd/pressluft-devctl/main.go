@@ -41,8 +41,8 @@ type healthOutput struct {
 }
 
 type jobEvent struct {
-	ID        int64   `json:"id"`
-	JobID     int64   `json:"job_id"`
+	ID        string  `json:"id"`
+	JobID     string  `json:"job_id"`
 	Seq       int64   `json:"seq"`
 	EventType string  `json:"event_type"`
 	Level     string  `json:"level"`
@@ -169,15 +169,17 @@ func runStats(runtime envconfig.ControlPlaneRuntime) error {
 	tables := []string{
 		"providers",
 		"servers",
+		"sites",
+		"domains",
 		"jobs",
-		"job_steps",
 		"job_events",
-		"job_checkpoints",
 		"activity",
 		"ca_certificates",
 		"node_certificates",
 		"registration_tokens",
 		"agent_ws_tokens",
+		"users",
+		"sessions",
 	}
 
 	counts := make([]tableCount, 0, len(tables))
