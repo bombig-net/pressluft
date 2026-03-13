@@ -18,7 +18,7 @@ func TestDomainsCreateAssignListDeleteEndpoints(t *testing.T) {
 	handler := NewHandler(db)
 	activityStore := activity.NewStore(db)
 
-	siteID, err := NewSiteStore(db).Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Agency Site", Status: SiteStatusDraft})
+	siteID, err := NewSiteStore(db).Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Agency Site", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestDomainsCreateForSiteDerivesUserSourceFromBaseDomainParent(t *testing.T)
 	serverID := mustInsertServerRecord(t, db, providerDBID, "ready")
 	handler := NewHandler(db)
 
-	siteID, err := NewSiteStore(db).Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Agency Site", Status: SiteStatusDraft})
+	siteID, err := NewSiteStore(db).Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Agency Site", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}

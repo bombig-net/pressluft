@@ -14,6 +14,8 @@
     site_vhost_link: "/etc/nginx/sites-enabled/pressluft-site-{{ site_id }}.conf"
     site_cert_dir: "/var/lib/pressluft/certs/{{ hostname }}"
     php_fpm_socket: "/run/php/php{{ php_version | default('8.3') }}-fpm.sock"
+    wp_cli_home: "{{ site_root_path }}/.wp-cli"
+    wp_cli_cache_dir: "{{ wp_cli_home }}/cache"
   tasks:
     - name: Validate supported site deploy contract inputs
       ansible.builtin.assert:
@@ -46,6 +48,10 @@
           owner: www-data
           group: www-data
           mode: '0755'
+        - path: "{{ wp_cli_cache_dir }}"
+          owner: www-data
+          group: www-data
+          mode: '0750'
         - path: "{{ site_config_dir }}"
           owner: root
           group: www-data
@@ -75,6 +81,9 @@
         cmd: >-
           wp --path={{ site_public_path }} --allow-root core download
           --force --skip-content --version={{ wordpress_version | default('6.8') }}
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Write site secret record
       ansible.builtin.copy:
@@ -108,6 +117,9 @@
       register: pressluft_wp_installed
       changed_when: false
       failed_when: false
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Install WordPress when absent
       when: pressluft_wp_installed.rc != 0
@@ -121,6 +133,9 @@
           --admin_password={{ admin_password }}
           --admin_email={{ admin_email }}
           --skip-email
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Keep WordPress URLs aligned with hostname
       become_user: www-data
@@ -131,6 +146,9 @@
       loop:
         - key: home
         - key: siteurl
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Install and activate Redis Cache plugin
       become_user: www-data
@@ -138,11 +156,17 @@
         cmd: >-
           wp --path={{ site_public_path }} --allow-root plugin install redis-cache
           --activate --force
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Enable Redis object cache
       become_user: www-data
       ansible.builtin.command:
         cmd: wp --path={{ site_public_path }} --allow-root redis enable --force
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Remove stock WordPress plugins when present
       become_user: www-data
@@ -153,6 +177,9 @@
         - hello
       failed_when: false
       changed_when: false
+      environment:
+        HOME: "{{ site_root_path }}"
+        WP_CLI_CACHE_DIR: "{{ wp_cli_cache_dir }}"
 
     - name: Render nginx site config with default TLS
       ansible.builtin.template:
@@ -179,6 +206,9 @@
     - name: Issue TLS certificate for site hostname
       ansible.builtin.command:
         cmd: /usr/local/bin/pressluft-acme-issue {{ hostname }}
+      environment:
+        PRESSLUFT_ACME_EMAIL: "{{ tls_contact_email | default('') }}"
+        PRESSLUFT_ACME_CA: letsencrypt
 
     - name: Render nginx site config with live certificate
       ansible.builtin.template:

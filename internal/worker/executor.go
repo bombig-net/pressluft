@@ -1018,7 +1018,7 @@ func (e *Executor) executeDeploySite(ctx context.Context, job *orchestrator.Job)
 
 	e.updateStep(ctx, job.ID, "deploy")
 	e.emitStepStart(ctx, job.ID, "deploy", "Creating site files, database, and WordPress config")
-	if err := e.runSiteDeployPlaybook(ctx, job.ID, server, site, primaryDomain, string(decryptedKey)); err != nil {
+	if err := e.runSiteDeployPlaybook(ctx, job.ID, server, site, primaryDomain, string(decryptedKey), payload.TLSContactEmail); err != nil {
 		_ = e.domainStore.UpdateRoutingStatus(ctx, primaryDomain.ID, serverpkg.DomainRoutingStateIssue, err.Error(), time.Now().UTC())
 		_ = e.siteStore.UpdateDeployment(ctx, site.ID, serverpkg.SiteDeploymentStateFailed, err.Error(), job.ID, "")
 		return e.failJob(ctx, job, fmt.Sprintf("site deploy failed: %v", err))
@@ -1071,7 +1071,7 @@ func (e *Executor) primaryDomainForSite(ctx context.Context, siteID string) (*se
 	return &domains[0], nil
 }
 
-func (e *Executor) runSiteDeployPlaybook(ctx context.Context, jobID string, server *serverpkg.StoredServer, site *serverpkg.StoredSite, primaryDomain *serverpkg.StoredDomain, privateKey string) error {
+func (e *Executor) runSiteDeployPlaybook(ctx context.Context, jobID string, server *serverpkg.StoredServer, site *serverpkg.StoredSite, primaryDomain *serverpkg.StoredDomain, privateKey, tlsContactEmail string) error {
 	if server == nil || site == nil || primaryDomain == nil {
 		return fmt.Errorf("site deployment context is incomplete")
 	}
@@ -1124,7 +1124,8 @@ func (e *Executor) runSiteDeployPlaybook(ctx context.Context, jobID string, serv
 			"db_password":       dbPassword,
 			"admin_user":        "pressluft",
 			"admin_password":    adminPassword,
-			"admin_email":       fmt.Sprintf("admin@%s", primaryDomain.Hostname),
+			"admin_email":       firstNonEmpty(site.WordPressAdminEmail, fmt.Sprintf("admin@%s", primaryDomain.Hostname)),
+			"tls_contact_email": strings.TrimSpace(tlsContactEmail),
 			"secret_key":        secretKey,
 		},
 	}

@@ -302,6 +302,7 @@ func mustOpenTestDB(t *testing.T) *sql.DB {
 			id                TEXT PRIMARY KEY,
 			server_id         TEXT    NOT NULL,
 			name              TEXT    NOT NULL,
+			wordpress_admin_email TEXT,
 			primary_domain    TEXT,
 			status            TEXT    NOT NULL DEFAULT 'draft',
 			deployment_state  TEXT    NOT NULL DEFAULT 'pending',

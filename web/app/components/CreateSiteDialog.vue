@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { StoredServer } from "~/composables/useServers";
 import { useSites, type StoredSite } from "~/composables/useSites";
+import { useAuth } from "~/composables/useAuth";
 
 const props = defineProps<{
   open: boolean;
@@ -26,10 +27,12 @@ const emit = defineEmits<{
 }>();
 
 const { createSite, saving } = useSites();
+const { user } = useAuth();
 
 const form = reactive({
   serverId: "",
   name: "",
+  wordpressAdminEmail: "",
   mode: "preview",
   hostname: "",
 });
@@ -69,7 +72,7 @@ const previewHostname = computed(() => {
 });
 
 const canCreate = computed(() => {
-  if (!form.serverId || !form.name.trim()) {
+  if (!form.serverId || !form.name.trim() || !form.wordpressAdminEmail.trim()) {
     return false;
   }
   if (form.mode === "preview") {
@@ -81,6 +84,7 @@ const canCreate = computed(() => {
 const resetForm = () => {
   formError.value = "";
   form.name = "";
+  form.wordpressAdminEmail = user.value?.email?.trim() || "";
   form.mode = "preview";
   form.hostname = "";
   const preferred = props.initialServerId?.trim();
@@ -101,10 +105,11 @@ const close = () => {
 const handleSubmit = async () => {
   formError.value = "";
   try {
-    const created = await createSite({
-      server_id: form.serverId,
-      name: form.name.trim(),
-      primary_hostname_config:
+      const created = await createSite({
+        server_id: form.serverId,
+        name: form.name.trim(),
+        wordpress_admin_email: form.wordpressAdminEmail.trim(),
+        primary_hostname_config:
         form.mode === "preview"
           ? {
               source: "fallback_resolver",
@@ -170,6 +175,14 @@ watch(
           <div class="space-y-1.5">
             <Label for="site-name" class="text-sm font-medium text-muted-foreground">Site name</Label>
             <Input id="site-name" v-model="form.name" placeholder="e.g. Northwind Marketing" />
+          </div>
+
+          <div class="space-y-1.5">
+            <Label for="site-admin-email" class="text-sm font-medium text-muted-foreground">WordPress admin email</Label>
+            <Input id="site-admin-email" v-model="form.wordpressAdminEmail" type="email" placeholder="owner@client-example.com" />
+            <p class="text-xs text-muted-foreground">
+              Prefilled from your Pressluft account, but editable for the website owner or inbox you want WordPress to use.
+            </p>
           </div>
 
           <div class="space-y-1.5">

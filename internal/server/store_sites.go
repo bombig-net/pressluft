@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -24,26 +25,28 @@ const (
 )
 
 type StoredSite struct {
-	ID               string `json:"id"`
-	ServerID         string `json:"server_id"`
-	ServerName       string `json:"server_name"`
-	Name             string `json:"name"`
-	PrimaryDomain    string `json:"primary_domain,omitempty"`
-	Status           string `json:"status"`
-	DeploymentState  string `json:"deployment_state"`
-	DeploymentStatus string `json:"deployment_status_message,omitempty"`
-	LastDeployJobID  string `json:"last_deploy_job_id,omitempty"`
-	LastDeployedAt   string `json:"last_deployed_at,omitempty"`
-	WordPressPath    string `json:"wordpress_path,omitempty"`
-	PHPVersion       string `json:"php_version,omitempty"`
-	WordPressVersion string `json:"wordpress_version,omitempty"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	ID                  string `json:"id"`
+	ServerID            string `json:"server_id"`
+	ServerName          string `json:"server_name"`
+	Name                string `json:"name"`
+	WordPressAdminEmail string `json:"wordpress_admin_email,omitempty"`
+	PrimaryDomain       string `json:"primary_domain,omitempty"`
+	Status              string `json:"status"`
+	DeploymentState     string `json:"deployment_state"`
+	DeploymentStatus    string `json:"deployment_status_message,omitempty"`
+	LastDeployJobID     string `json:"last_deploy_job_id,omitempty"`
+	LastDeployedAt      string `json:"last_deployed_at,omitempty"`
+	WordPressPath       string `json:"wordpress_path,omitempty"`
+	PHPVersion          string `json:"php_version,omitempty"`
+	WordPressVersion    string `json:"wordpress_version,omitempty"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 type CreateSiteInput struct {
 	ServerID              string
 	Name                  string
+	WordPressAdminEmail   string
 	PrimaryDomain         string
 	PrimaryHostnameConfig *CreateSitePrimaryHostnameInput
 	Status                string
@@ -60,13 +63,14 @@ type CreateSitePrimaryHostnameInput struct {
 }
 
 type UpdateSiteInput struct {
-	Name             *string
-	PrimaryDomain    *string
-	Status           *string
-	WordPressPath    *string
-	PHPVersion       *string
-	WordPressVersion *string
-	ServerID         *string
+	Name                *string
+	WordPressAdminEmail *string
+	PrimaryDomain       *string
+	Status              *string
+	WordPressPath       *string
+	PHPVersion          *string
+	WordPressVersion    *string
+	ServerID            *string
 }
 
 type SiteStore struct {
@@ -127,11 +131,12 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO sites (id, server_id, name, primary_domain, status, deployment_state, deployment_status_message, last_deploy_job_id, last_deployed_at, wordpress_path, php_version, wordpress_version, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sites (id, server_id, name, wordpress_admin_email, primary_domain, status, deployment_state, deployment_status_message, last_deploy_job_id, last_deployed_at, wordpress_path, php_version, wordpress_version, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		publicID,
 		serverID,
 		strings.TrimSpace(in.Name),
+		strings.TrimSpace(in.WordPressAdminEmail),
 		nil,
 		strings.TrimSpace(in.Status),
 		SiteDeploymentStatePending,
@@ -160,7 +165,7 @@ func (s *SiteStore) Create(ctx context.Context, in CreateSiteInput) (string, err
 
 func (s *SiteStore) List(ctx context.Context) ([]StoredSite, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(si.wordpress_admin_email, ''), COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
 		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
@@ -179,7 +184,7 @@ func (s *SiteStore) ListByServer(ctx context.Context, serverID string) ([]Stored
 		return nil, fmt.Errorf("server_id: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(si.wordpress_admin_email, ''), COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
 		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
@@ -210,7 +215,7 @@ func (s *SiteStore) GetByID(ctx context.Context, id string) (*StoredSite, error)
 		wordpressVersion sql.NullString
 	)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
+		`SELECT si.id, si.server_id, srv.name, si.name, COALESCE(si.wordpress_admin_email, ''), COALESCE(dom.hostname, si.primary_domain), si.status, si.deployment_state, COALESCE(si.deployment_status_message, ''), COALESCE(si.last_deploy_job_id, ''), COALESCE(si.last_deployed_at, ''), si.wordpress_path, si.php_version, si.wordpress_version, si.created_at, si.updated_at
 		 FROM sites si
 		 JOIN servers srv ON srv.id = si.server_id
 		 LEFT JOIN domains dom ON dom.site_id = si.id AND dom.is_primary = 1
@@ -221,6 +226,7 @@ func (s *SiteStore) GetByID(ctx context.Context, id string) (*StoredSite, error)
 		&site.ServerID,
 		&site.ServerName,
 		&site.Name,
+		&site.WordPressAdminEmail,
 		&primaryDomain,
 		&site.Status,
 		&site.DeploymentState,
@@ -314,6 +320,10 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 	if in.Name != nil {
 		name = strings.TrimSpace(*in.Name)
 	}
+	wordpressAdminEmail := current.WordPressAdminEmail
+	if in.WordPressAdminEmail != nil {
+		wordpressAdminEmail = strings.TrimSpace(*in.WordPressAdminEmail)
+	}
 	primaryDomain := current.PrimaryDomain
 	if in.PrimaryDomain != nil {
 		primaryDomain = current.PrimaryDomain
@@ -342,10 +352,11 @@ func (s *SiteStore) Update(ctx context.Context, id string, in UpdateSiteInput) (
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx,
 		`UPDATE sites
-		 SET server_id = ?, name = ?, primary_domain = ?, status = ?, wordpress_path = ?, php_version = ?, wordpress_version = ?, updated_at = ?
+		 SET server_id = ?, name = ?, wordpress_admin_email = ?, primary_domain = ?, status = ?, wordpress_path = ?, php_version = ?, wordpress_version = ?, updated_at = ?
 		 WHERE id = ?`,
 		serverID,
 		name,
+		wordpressAdminEmail,
 		nullableSiteString(primaryDomain),
 		status,
 		nullableSiteString(wordpressPath),
@@ -411,6 +422,12 @@ func validateCreateSiteInput(in CreateSiteInput) error {
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		return fmt.Errorf("name is required")
+	}
+	if strings.TrimSpace(in.WordPressAdminEmail) == "" {
+		return fmt.Errorf("wordpress_admin_email is required")
+	}
+	if _, err := mail.ParseAddress(strings.TrimSpace(in.WordPressAdminEmail)); err != nil {
+		return fmt.Errorf("wordpress_admin_email must be a valid email address")
 	}
 	if strings.TrimSpace(in.PrimaryDomain) != "" && in.PrimaryHostnameConfig != nil {
 		return fmt.Errorf("use either primary_domain or primary_hostname_config, not both")
@@ -609,6 +626,14 @@ func validateUpdateSiteInput(in UpdateSiteInput) error {
 			return fmt.Errorf("server_id: %w", err)
 		}
 	}
+	if in.WordPressAdminEmail != nil {
+		if strings.TrimSpace(*in.WordPressAdminEmail) == "" {
+			return fmt.Errorf("wordpress_admin_email is required")
+		}
+		if _, err := mail.ParseAddress(strings.TrimSpace(*in.WordPressAdminEmail)); err != nil {
+			return fmt.Errorf("wordpress_admin_email must be a valid email address")
+		}
+	}
 	return nil
 }
 
@@ -656,20 +681,22 @@ func scanSites(rows *sql.Rows) ([]StoredSite, error) {
 	var out []StoredSite
 	for rows.Next() {
 		var (
-			site             StoredSite
-			primaryDomain    sql.NullString
-			deploymentStatus sql.NullString
-			lastDeployJobID  sql.NullString
-			lastDeployedAt   sql.NullString
-			wordpressPath    sql.NullString
-			phpVersion       sql.NullString
-			wordpressVersion sql.NullString
+			site                StoredSite
+			wordpressAdminEmail sql.NullString
+			primaryDomain       sql.NullString
+			deploymentStatus    sql.NullString
+			lastDeployJobID     sql.NullString
+			lastDeployedAt      sql.NullString
+			wordpressPath       sql.NullString
+			phpVersion          sql.NullString
+			wordpressVersion    sql.NullString
 		)
 		if err := rows.Scan(
 			&site.ID,
 			&site.ServerID,
 			&site.ServerName,
 			&site.Name,
+			&wordpressAdminEmail,
 			&primaryDomain,
 			&site.Status,
 			&site.DeploymentState,
@@ -691,6 +718,7 @@ func scanSites(rows *sql.Rows) ([]StoredSite, error) {
 			return nil, fmt.Errorf("scan site deployment state: %w", err)
 		}
 		site.PrimaryDomain = nullStringValue(primaryDomain)
+		site.WordPressAdminEmail = nullStringValue(wordpressAdminEmail)
 		site.DeploymentStatus = nullStringValue(deploymentStatus)
 		site.LastDeployJobID = nullStringValue(lastDeployJobID)
 		site.LastDeployedAt = nullStringValue(lastDeployedAt)

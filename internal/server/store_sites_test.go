@@ -12,13 +12,14 @@ func TestSiteStoreCreateListAndGet(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 
 	siteID, err := store.Create(context.Background(), CreateSiteInput{
-		ServerID:         serverID,
-		Name:             "Agency Brochure",
-		PrimaryDomain:    "brochure.example.test",
-		Status:           SiteStatusDraft,
-		WordPressPath:    "/srv/www/brochure/current",
-		PHPVersion:       "8.3",
-		WordPressVersion: "6.8",
+		ServerID:            serverID,
+		Name:                "Agency Brochure",
+		WordPressAdminEmail: "owner@example.test",
+		PrimaryDomain:       "brochure.example.test",
+		Status:              SiteStatusDraft,
+		WordPressPath:       "/srv/www/brochure/current",
+		PHPVersion:          "8.3",
+		WordPressVersion:    "6.8",
 	})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
@@ -63,8 +64,9 @@ func TestSiteStoreCreateWithUserBaseDomainPrimaryHostname(t *testing.T) {
 	}
 
 	siteID, err := store.Create(context.Background(), CreateSiteInput{
-		ServerID: serverID,
-		Name:     "Agency Brochure",
+		ServerID:            serverID,
+		Name:                "Agency Brochure",
+		WordPressAdminEmail: "owner@example.test",
 		PrimaryHostnameConfig: &CreateSitePrimaryHostnameInput{
 			Source:   DomainSourceUser,
 			Label:    "Northwind Live",
@@ -120,8 +122,9 @@ func TestSiteStoreCreateWithPendingBaseDomainKeepsChildPending(t *testing.T) {
 	}
 
 	siteID, err := store.Create(context.Background(), CreateSiteInput{
-		ServerID: serverID,
-		Name:     "Agency Brochure",
+		ServerID:            serverID,
+		Name:                "Agency Brochure",
+		WordPressAdminEmail: "owner@example.test",
 		PrimaryHostnameConfig: &CreateSitePrimaryHostnameInput{
 			Source:   DomainSourceUser,
 			Label:    "preview-42",
@@ -155,8 +158,9 @@ func TestSiteStoreCreateWithFallbackResolverPrimaryHostname(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 
 	siteID, err := store.Create(context.Background(), CreateSiteInput{
-		ServerID: serverID,
-		Name:     "Agency Brochure",
+		ServerID:            serverID,
+		Name:                "Agency Brochure",
+		WordPressAdminEmail: "owner@example.test",
 		PrimaryHostnameConfig: &CreateSitePrimaryHostnameInput{
 			Source: DomainSourceFallbackResolver,
 			Label:  "Northwind Live",
@@ -195,8 +199,8 @@ func TestSiteStoreListByServer(t *testing.T) {
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 	otherServerID := mustInsertServerWithStatus(t, db, "ready")
 
-	_, _ = store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", Status: SiteStatusDraft})
-	_, _ = store.Create(context.Background(), CreateSiteInput{ServerID: otherServerID, Name: "Two", Status: SiteStatusActive})
+	_, _ = store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "One", WordPressAdminEmail: "one@example.test", Status: SiteStatusDraft})
+	_, _ = store.Create(context.Background(), CreateSiteInput{ServerID: otherServerID, Name: "Two", WordPressAdminEmail: "two@example.test", Status: SiteStatusActive})
 
 	sites, err := store.ListByServer(context.Background(), serverID)
 	if err != nil {
@@ -214,7 +218,7 @@ func TestSiteStoreUpdate(t *testing.T) {
 	db := mustOpenTestDB(t)
 	store := NewSiteStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
-	siteID, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Original", Status: SiteStatusDraft})
+	siteID, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Original", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -224,14 +228,16 @@ func TestSiteStoreUpdate(t *testing.T) {
 	updatedPath := "/srv/www/store/current"
 	updatedPHP := "8.2"
 	updatedWP := "6.7"
+	updatedAdminEmail := "site-owner@example.test"
 
 	site, err := store.Update(context.Background(), siteID, UpdateSiteInput{
-		Name:             &updatedName,
-		Status:           &updatedStatus,
-		PrimaryDomain:    &updatedDomain,
-		WordPressPath:    &updatedPath,
-		PHPVersion:       &updatedPHP,
-		WordPressVersion: &updatedWP,
+		Name:                &updatedName,
+		WordPressAdminEmail: &updatedAdminEmail,
+		Status:              &updatedStatus,
+		PrimaryDomain:       &updatedDomain,
+		WordPressPath:       &updatedPath,
+		PHPVersion:          &updatedPHP,
+		WordPressVersion:    &updatedWP,
 	})
 	if err != nil {
 		t.Fatalf("update site: %v", err)
@@ -242,6 +248,9 @@ func TestSiteStoreUpdate(t *testing.T) {
 	if site.PrimaryDomain != updatedDomain {
 		t.Fatalf("primary_domain = %q, want %q", site.PrimaryDomain, updatedDomain)
 	}
+	if site.WordPressAdminEmail != updatedAdminEmail {
+		t.Fatalf("wordpress_admin_email = %q, want %q", site.WordPressAdminEmail, updatedAdminEmail)
+	}
 }
 
 func TestSiteStoreUpdateRollsBackWhenPrimaryHostnameAssignmentFails(t *testing.T) {
@@ -250,10 +259,11 @@ func TestSiteStoreUpdateRollsBackWhenPrimaryHostnameAssignmentFails(t *testing.T
 	domainStore := NewDomainStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 	siteID, err := store.Create(context.Background(), CreateSiteInput{
-		ServerID:      serverID,
-		Name:          "Original",
-		PrimaryDomain: "original.example.test",
-		Status:        SiteStatusDraft,
+		ServerID:            serverID,
+		Name:                "Original",
+		WordPressAdminEmail: "owner@example.test",
+		PrimaryDomain:       "original.example.test",
+		Status:              SiteStatusDraft,
 	})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
@@ -299,7 +309,7 @@ func TestSiteStoreDelete(t *testing.T) {
 	db := mustOpenTestDB(t)
 	store := NewSiteStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
-	siteID, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Delete Me", Status: SiteStatusDraft})
+	siteID, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Delete Me", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft})
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
@@ -316,10 +326,10 @@ func TestSiteStoreValidationAndNotFound(t *testing.T) {
 	store := NewSiteStore(db)
 	serverID := mustInsertServerWithStatus(t, db, "ready")
 
-	if _, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "", Status: SiteStatusDraft}); err == nil {
+	if _, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "", WordPressAdminEmail: "owner@example.test", Status: SiteStatusDraft}); err == nil {
 		t.Fatal("expected create validation error")
 	}
-	if _, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Bad", Status: "wrong"}); err == nil {
+	if _, err := store.Create(context.Background(), CreateSiteInput{ServerID: serverID, Name: "Bad", WordPressAdminEmail: "owner@example.test", Status: "wrong"}); err == nil {
 		t.Fatal("expected status validation error")
 	}
 	if _, err := store.GetByID(context.Background(), testPublicID(999)); err == nil || !strings.Contains(err.Error(), "not found") {

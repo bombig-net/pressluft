@@ -106,6 +106,7 @@ export interface CreateServerResponse {
 export interface CreateSiteRequest {
   server_id: string
   name: string
+  wordpress_admin_email: string
   primary_domain?: string
   primary_hostname_config?: { source: string; hostname?: string; label?: string; domain_id?: string }
   status?: string
@@ -326,6 +327,7 @@ export interface StoredSite {
   server_id: string
   server_name: string
   name: string
+  wordpress_admin_email?: string
   primary_domain?: string
   status: string
   deployment_state: string
@@ -360,6 +362,7 @@ export interface UpdateDomainRequest {
 export interface UpdateSiteRequest {
   server_id?: string
   name?: string
+  wordpress_admin_email?: string
   primary_domain?: string
   status?: string
   wordpress_path?: string

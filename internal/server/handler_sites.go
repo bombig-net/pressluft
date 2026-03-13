@@ -8,6 +8,7 @@ import (
 
 	"pressluft/internal/activity"
 	"pressluft/internal/apitypes"
+	"pressluft/internal/auth"
 	"pressluft/internal/orchestrator"
 	"pressluft/internal/platform"
 )
@@ -22,7 +23,8 @@ type sitesHandler struct {
 }
 
 type deploySiteJobPayload struct {
-	SiteID string `json:"site_id"`
+	SiteID          string `json:"site_id"`
+	TLSContactEmail string `json:"tls_contact_email,omitempty"`
 }
 
 func (sh *sitesHandler) route(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +136,7 @@ func (sh *sitesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	id, err := sh.store.Create(r.Context(), CreateSiteInput{
 		ServerID:              req.ServerID,
 		Name:                  req.Name,
+		WordPressAdminEmail:   req.WordPressAdminEmail,
 		PrimaryDomain:         req.PrimaryDomain,
 		PrimaryHostnameConfig: apiCreateSitePrimaryHostnameConfig(req.PrimaryHostnameConfig),
 		Status:                status,
@@ -174,7 +177,11 @@ func (sh *sitesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if sh.jobStore != nil && strings.TrimSpace(site.PrimaryDomain) != "" {
-		payload, err := json.Marshal(deploySiteJobPayload{SiteID: site.ID})
+		actor := auth.ActorFromContext(r.Context())
+		payload, err := json.Marshal(deploySiteJobPayload{
+			SiteID:          site.ID,
+			TLSContactEmail: strings.TrimSpace(actor.Email),
+		})
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to queue site deployment: marshal payload")
 			return
@@ -252,13 +259,14 @@ func (sh *sitesHandler) handleUpdate(w http.ResponseWriter, r *http.Request, sit
 		return
 	}
 	site, err := sh.store.Update(r.Context(), siteID, UpdateSiteInput{
-		Name:             req.Name,
-		PrimaryDomain:    req.PrimaryDomain,
-		Status:           req.Status,
-		WordPressPath:    req.WordPressPath,
-		PHPVersion:       req.PHPVersion,
-		WordPressVersion: req.WordPressVersion,
-		ServerID:         req.ServerID,
+		Name:                req.Name,
+		WordPressAdminEmail: req.WordPressAdminEmail,
+		PrimaryDomain:       req.PrimaryDomain,
+		Status:              req.Status,
+		WordPressPath:       req.WordPressPath,
+		PHPVersion:          req.PHPVersion,
+		WordPressVersion:    req.WordPressVersion,
+		ServerID:            req.ServerID,
 	})
 	if err != nil {
 		switch {
@@ -329,20 +337,21 @@ func (sh *sitesHandler) handleDelete(w http.ResponseWriter, r *http.Request, sit
 
 func apiStoredSite(in StoredSite) apitypes.StoredSite {
 	return apitypes.StoredSite{
-		ID:               apitypes.FormatAppID(in.ID),
-		ServerID:         apitypes.FormatAppID(in.ServerID),
-		ServerName:       in.ServerName,
-		Name:             in.Name,
-		PrimaryDomain:    in.PrimaryDomain,
-		Status:           in.Status,
-		DeploymentState:  in.DeploymentState,
-		DeploymentStatus: in.DeploymentStatus,
-		LastDeployJobID:  apitypes.FormatAppID(in.LastDeployJobID),
-		LastDeployedAt:   in.LastDeployedAt,
-		WordPressPath:    in.WordPressPath,
-		PHPVersion:       in.PHPVersion,
-		WordPressVersion: in.WordPressVersion,
-		CreatedAt:        in.CreatedAt,
-		UpdatedAt:        in.UpdatedAt,
+		ID:                  apitypes.FormatAppID(in.ID),
+		ServerID:            apitypes.FormatAppID(in.ServerID),
+		ServerName:          in.ServerName,
+		Name:                in.Name,
+		WordPressAdminEmail: in.WordPressAdminEmail,
+		PrimaryDomain:       in.PrimaryDomain,
+		Status:              in.Status,
+		DeploymentState:     in.DeploymentState,
+		DeploymentStatus:    in.DeploymentStatus,
+		LastDeployJobID:     apitypes.FormatAppID(in.LastDeployJobID),
+		LastDeployedAt:      in.LastDeployedAt,
+		WordPressPath:       in.WordPressPath,
+		PHPVersion:          in.PHPVersion,
+		WordPressVersion:    in.WordPressVersion,
+		CreatedAt:           in.CreatedAt,
+		UpdatedAt:           in.UpdatedAt,
 	}
 }

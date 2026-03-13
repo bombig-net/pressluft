@@ -32,6 +32,7 @@ const successMessage = ref("");
 
 const form = reactive({
   name: "",
+  wordpressAdminEmail: "",
 });
 
 const hostnameForm = reactive({
@@ -71,6 +72,7 @@ const currentServerIPv4 = computed(() => currentServer.value?.ipv4 || "");
 
 const hydrateForm = (value: StoredSite) => {
   form.name = value.name;
+  form.wordpressAdminEmail = value.wordpress_admin_email || "";
 };
 
 const formatDate = (iso: string) => {
@@ -147,6 +149,7 @@ const handleSave = async () => {
   try {
     const updated = await updateSite(siteId.value, {
       name: form.name,
+      wordpress_admin_email: form.wordpressAdminEmail,
     });
     site.value = updated;
     hydrateForm(updated);
@@ -292,8 +295,13 @@ watch(currentServerIPv4, (value) => {
                   <Input v-model="form.name" />
                 </div>
 
+                <div class="space-y-1.5">
+                  <Label class="text-sm font-medium text-muted-foreground">WordPress admin email</Label>
+                  <Input v-model="form.wordpressAdminEmail" type="email" />
+                </div>
+
                 <div class="rounded-2xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
-                  Pressluft keeps the install path, PHP version, WordPress version, and deployment contract under managed defaults during this first live deployment phase.
+                  Pressluft keeps the install path, PHP version, WordPress version, and certificate contact flow under managed defaults during this first live deployment phase.
                 </div>
 
                 <div class="flex flex-col gap-3 border-t border-border/50 pt-4 sm:flex-row sm:justify-between">

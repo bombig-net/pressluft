@@ -24,6 +24,16 @@ define( 'FS_METHOD', 'direct' );
 define( 'WP_REDIS_HOST', '127.0.0.1' );
 define( 'WP_REDIS_PORT', 6379 );
 define( 'WP_REDIS_PREFIX', '{{ site_id }}:' );
+define( 'WP_HOME', 'https://{{ hostname }}' );
+define( 'WP_SITEURL', 'https://{{ hostname }}' );
+
+if ( empty( $_SERVER['HTTP_HOST'] ) ) {
+    $_SERVER['HTTP_HOST'] = '{{ hostname }}';
+}
+
+if ( empty( $_SERVER['HTTPS'] ) ) {
+    $_SERVER['HTTPS'] = 'on';
+}
 
 if ( ! defined( 'ABSPATH' ) ) {
     define( 'ABSPATH', __DIR__ . '/' );

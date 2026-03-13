@@ -193,7 +193,8 @@ type ManageVolumePayload struct {
 }
 
 type DeploySitePayload struct {
-	SiteID string `json:"site_id"`
+	SiteID          string `json:"site_id"`
+	TLSContactEmail string `json:"tls_contact_email,omitempty"`
 }
 
 func MarshalConfigureServerPayload(in ConfigureServerPayload) (string, error) {
@@ -297,6 +298,7 @@ func UnmarshalManageVolumePayload(raw string) (ManageVolumePayload, error) {
 
 func MarshalDeploySitePayload(in DeploySitePayload) (string, error) {
 	in.SiteID = strings.TrimSpace(in.SiteID)
+	in.TLSContactEmail = strings.TrimSpace(in.TLSContactEmail)
 	return marshalNormalizedPayload(in)
 }
 
@@ -306,6 +308,7 @@ func UnmarshalDeploySitePayload(raw string) (DeploySitePayload, error) {
 		return DeploySitePayload{}, err
 	}
 	out.SiteID = strings.TrimSpace(out.SiteID)
+	out.TLSContactEmail = strings.TrimSpace(out.TLSContactEmail)
 	return out, nil
 }
 

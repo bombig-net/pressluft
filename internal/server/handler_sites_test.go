@@ -20,12 +20,13 @@ func TestSitesCreateListGetUpdateDeleteEndpoints(t *testing.T) {
 	activityStore := activity.NewStore(db)
 
 	body := map[string]any{
-		"server_id":      serverID,
-		"name":           "Agency Site",
-		"primary_domain": "agency.example.test",
-		"status":         "draft",
-		"wordpress_path": "/srv/www/agency/current",
-		"php_version":    "8.3",
+		"server_id":             serverID,
+		"name":                  "Agency Site",
+		"wordpress_admin_email": "owner@example.test",
+		"primary_domain":        "agency.example.test",
+		"status":                "draft",
+		"wordpress_path":        "/srv/www/agency/current",
+		"php_version":           "8.3",
 	}
 	bodyBytes, _ := json.Marshal(body)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(bodyBytes))
@@ -76,7 +77,7 @@ func TestSitesCreateListGetUpdateDeleteEndpoints(t *testing.T) {
 		t.Fatalf("get status = %d, want %d", getRes.Code, http.StatusOK)
 	}
 
-	updatedName := map[string]any{"name": "Agency Site Live", "status": "active"}
+	updatedName := map[string]any{"name": "Agency Site Live", "wordpress_admin_email": "site-owner@example.test", "status": "active"}
 	updateBytes, _ := json.Marshal(updatedName)
 	updateReq := httptest.NewRequest(http.MethodPatch, "/api/sites/"+siteID, bytes.NewReader(updateBytes))
 	updateReq.Header.Set("Content-Type", "application/json")
@@ -137,9 +138,10 @@ func TestSitesCreateWithFallbackResolverPrimaryHostnameConfig(t *testing.T) {
 	handler := NewHandler(db)
 
 	body := map[string]any{
-		"server_id": serverID,
-		"name":      "Sandbox Site",
-		"status":    "draft",
+		"server_id":             serverID,
+		"name":                  "Sandbox Site",
+		"wordpress_admin_email": "owner@example.test",
+		"status":                "draft",
 		"primary_hostname_config": map[string]any{
 			"source": "fallback_resolver",
 			"label":  "client preview",
@@ -186,9 +188,10 @@ func TestSitesCreateWithFallbackResolverPrimaryHostnameConfigRequiresServerIPv4(
 	handler := NewHandler(db)
 
 	body := map[string]any{
-		"server_id": serverID,
-		"name":      "Sandbox Site",
-		"status":    "draft",
+		"server_id":             serverID,
+		"name":                  "Sandbox Site",
+		"wordpress_admin_email": "owner@example.test",
+		"status":                "draft",
 		"primary_hostname_config": map[string]any{
 			"source": "fallback_resolver",
 			"label":  "client preview",
@@ -221,9 +224,10 @@ func TestSitesCreateWithUserBaseDomainPrimaryHostnameConfig(t *testing.T) {
 	handler := NewHandler(db)
 
 	body := map[string]any{
-		"server_id": serverID,
-		"name":      "Customer Base Domain Site",
-		"status":    "draft",
+		"server_id":             serverID,
+		"name":                  "Customer Base Domain Site",
+		"wordpress_admin_email": "owner@example.test",
+		"status":                "draft",
 		"primary_hostname_config": map[string]any{
 			"source":    "user",
 			"label":     "staging",
@@ -265,10 +269,11 @@ func TestSitesCreateReturnsBadRequestForDuplicatePrimaryDomain(t *testing.T) {
 	handler := NewHandler(db)
 
 	body := map[string]any{
-		"server_id":      serverID,
-		"name":           "Agency Site",
-		"primary_domain": "agency.example.test",
-		"status":         "draft",
+		"server_id":             serverID,
+		"name":                  "Agency Site",
+		"wordpress_admin_email": "owner@example.test",
+		"primary_domain":        "agency.example.test",
+		"status":                "draft",
 	}
 	bodyBytes, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(bodyBytes))
@@ -287,9 +292,10 @@ func TestSitesUpdateReturnsBadRequestForInvalidOrConflictingPrimaryDomain(t *tes
 	handler := NewHandler(db)
 
 	createBody := map[string]any{
-		"server_id": serverID,
-		"name":      "Agency Site",
-		"status":    "draft",
+		"server_id":             serverID,
+		"name":                  "Agency Site",
+		"wordpress_admin_email": "owner@example.test",
+		"status":                "draft",
 	}
 	createBytes, _ := json.Marshal(createBody)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/sites", bytes.NewReader(createBytes))
@@ -316,10 +322,11 @@ func TestSitesUpdateReturnsBadRequestForInvalidOrConflictingPrimaryDomain(t *tes
 	}
 
 	conflictSiteID, err := NewSiteStore(db).Create(context.Background(), CreateSiteInput{
-		ServerID:      serverID,
-		Name:          "Conflicting Site",
-		PrimaryDomain: "conflict.example.test",
-		Status:        SiteStatusDraft,
+		ServerID:            serverID,
+		Name:                "Conflicting Site",
+		WordPressAdminEmail: "owner@example.test",
+		PrimaryDomain:       "conflict.example.test",
+		Status:              SiteStatusDraft,
 	})
 	if err != nil {
 		t.Fatalf("create conflicting site: %v", err)
