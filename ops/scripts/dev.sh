@@ -22,8 +22,6 @@ DEV_UI_HOST=${DEV_UI_HOST:-0.0.0.0}
 WEB_DIR=${WEB_DIR:-"$ROOT_DIR/web"}
 GO_CMD=${GO:-go}
 NPM_CMD=${NPM:-npm}
-DEV_WORKFLOW=${DEV_WORKFLOW:-dev}
-
 CLOUDFLARED_PID=""
 GO_PID=""
 TAIL_PID=""
@@ -59,8 +57,7 @@ case "${1:-}" in
     printf '%s\n' '  NUXT_DEV_PROXY_TARGET'
     printf '%s\n' '                 Optional Nuxt dev proxy target (default: http://localhost:${DEV_API_PORT}/api)'
     printf '%s\n' '  PRESSLUFT_CONTROL_PLANE_URL'
-    printf '%s\n' '                 Stable public URL; required for DEV_WORKFLOW=lab, optional for dev'
-    printf '%s\n' '  DEV_WORKFLOW    dev (default) or lab'
+    printf '%s\n' '                 Stable public URL; when unset, an ephemeral Cloudflare quick tunnel is used'
     exit 0
     ;;
 esac
@@ -97,21 +94,16 @@ start_quick_tunnel() {
   echo "Cloudflare tunnel: $PRESSLUFT_CONTROL_PLANE_URL"
 }
 
-print_workflow_banner() {
-  case "$DEV_WORKFLOW" in
-    lab)
-      echo "Workflow: dev-lab"
-      echo "Callback durability: stable public URL required"
-      echo "Remote connectivity: durable reconnect expected"
-      ;;
-    *)
-      echo "Workflow: dev"
-      echo "Remote connectivity: session-scoped"
-      if [ -n "${PRESSLUFT_CONTROL_PLANE_URL:-}" ] && echo "$PRESSLUFT_CONTROL_PLANE_URL" | grep -q '\.trycloudflare\.com'; then
-        echo "WARNING: Cloudflare quick tunnels are ephemeral. Remote agents configured against this URL will not reconnect after control-plane restart."
-      fi
-      ;;
-  esac
+print_tunnel_warning() {
+  echo ""
+  echo "========================================================================="
+  echo "  WARNING: Running with a Cloudflare quick tunnel (ephemeral URL)."
+  echo "  Remote agents provisioned in this session cannot reconnect after a"
+  echo "  restart. For durable testing, set PRESSLUFT_CONTROL_PLANE_URL to a"
+  echo "  stable URL before running make dev (e.g. a pressluft.dev subdomain"
+  echo "  or ngrok)."
+  echo "========================================================================="
+  echo ""
 }
 
 start_backend() {
@@ -145,35 +137,19 @@ show_backend_failure() {
   fi
   if [ -n "$BACKEND_LOG" ] && grep -q "address already in use" "$BACKEND_LOG"; then
     echo "Go backend failed to start because port $DEV_API_PORT is already in use."
-    echo "Choose another port, for example: make $([ "$DEV_WORKFLOW" = "lab" ] && printf '%s' 'dev-lab' || printf '%s' 'dev') DEV_API_PORT=8082"
+    echo "Choose another port, for example: make dev DEV_API_PORT=8082"
     return
   fi
   echo "Go backend failed during startup."
   echo "Run make dev-status to inspect local state. If the state bundle is disposable, reset it with make dev-reset CONFIRM=1."
 }
 
-case "$DEV_WORKFLOW" in
-  dev)
-    if [ -z "${PRESSLUFT_CONTROL_PLANE_URL:-}" ]; then
-      start_quick_tunnel
-    fi
-    ;;
-  lab)
-    if [ -z "${PRESSLUFT_CONTROL_PLANE_URL:-}" ]; then
-      echo "dev-lab requires PRESSLUFT_CONTROL_PLANE_URL with a stable public URL."
-      run_devctl status
-      exit 1
-    fi
-    ;;
-  *)
-    echo "Unsupported DEV_WORKFLOW: $DEV_WORKFLOW"
-    exit 1
-    ;;
-esac
+if [ -z "${PRESSLUFT_CONTROL_PLANE_URL:-}" ]; then
+  start_quick_tunnel
+  print_tunnel_warning
+fi
 
-print_workflow_banner
-
-if ! run_devctl preflight --workflow="$DEV_WORKFLOW"; then
+if ! run_devctl preflight; then
   exit 1
 fi
 

@@ -106,16 +106,12 @@ func main() {
 	case "status":
 		printReport(devdiag.Inspect(runtime))
 	case "preflight":
-		workflow, err := parseWorkflow(args)
-		if err != nil {
-			exitErr(err)
-		}
 		report := devdiag.Inspect(runtime)
 		printReport(report)
-		if !report.HealthyFor(workflow) {
+		if !report.Healthy() {
 			fmt.Println()
-			fmt.Printf("workflow=%s preflight failed\n", workflow)
-			for _, issue := range report.WorkflowIssues(workflow) {
+			fmt.Println("preflight failed")
+			for _, issue := range report.Issues() {
 				fmt.Printf("- %s\n", issue)
 			}
 			fmt.Println("Suggested next steps: make dev-status ; make dev-reset CONFIRM=1")
@@ -151,7 +147,7 @@ func main() {
 func usage() {
 	fmt.Println("pressluft-devctl")
 	fmt.Println("  status                   Inspect local dev state and callback durability")
-	fmt.Println("  preflight --workflow=X   Validate local state for dev or lab workflow")
+	fmt.Println("  preflight                Validate local state before starting dev")
 	fmt.Println("  stats                    Show row counts for key runtime tables")
 	fmt.Println("  events [--limit N]       Show recent job_events and activity rows")
 	fmt.Println("  health                   Verify runtime artifacts can be opened")
@@ -394,24 +390,6 @@ func lookupSSHAccessTarget(db *sql.DB, target string) (*sshAccessTarget, error) 
 		return nil, fmt.Errorf("multiple servers matched %q: %s", target, strings.Join(ids, ", "))
 	}
 	return &matches[0], nil
-}
-
-func parseWorkflow(args []string) (devdiag.Workflow, error) {
-	workflow := devdiag.WorkflowDev
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--workflow=") {
-			value := strings.TrimPrefix(arg, "--workflow=")
-			switch value {
-			case string(devdiag.WorkflowDev):
-				workflow = devdiag.WorkflowDev
-			case string(devdiag.WorkflowLab):
-				workflow = devdiag.WorkflowLab
-			default:
-				return "", fmt.Errorf("unsupported workflow %q", value)
-			}
-		}
-	}
-	return workflow, nil
 }
 
 func parseEventsLimit(args []string) (int, error) {

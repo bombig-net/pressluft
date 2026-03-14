@@ -14,13 +14,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Workflow string
-
-const (
-	WorkflowDev Workflow = "dev"
-	WorkflowLab Workflow = "lab"
-)
-
 type CheckStatus string
 
 const (
@@ -58,10 +51,7 @@ func Inspect(runtime envconfig.ControlPlaneRuntime) Report {
 	return report
 }
 
-func (r Report) HealthyFor(workflow Workflow) bool {
-	if workflow == WorkflowLab && r.CallbackURLMode != platform.CallbackURLModeStable {
-		return false
-	}
+func (r Report) Healthy() bool {
 	for _, check := range r.Checks {
 		if check.Status == CheckStatusError {
 			return false
@@ -70,22 +60,8 @@ func (r Report) HealthyFor(workflow Workflow) bool {
 	return true
 }
 
-func (r Report) WorkflowIssues(workflow Workflow) []string {
+func (r Report) Issues() []string {
 	var issues []string
-	switch workflow {
-	case WorkflowLab:
-		switch r.CallbackURLMode {
-		case platform.CallbackURLModeStable:
-		case platform.CallbackURLModeEphemeral:
-			issues = append(issues, "dev-lab requires a stable PRESSLUFT_CONTROL_PLANE_URL; quick tunnels are session-scoped")
-		default:
-			issues = append(issues, "dev-lab requires PRESSLUFT_CONTROL_PLANE_URL with a stable public URL")
-		}
-	case WorkflowDev:
-		if r.CallbackURLMode == platform.CallbackURLModeEphemeral {
-			issues = append(issues, "remote connectivity is session-scoped in dev; remote agents will not reconnect after control-plane restart")
-		}
-	}
 	for _, check := range r.Checks {
 		if check.Status == CheckStatusError {
 			issues = append(issues, check.Detail)
