@@ -8,7 +8,7 @@ Do not hand-edit generated files:
 - `web/app/lib/api-contract.ts`
 - `web/app/lib/platform-contract.generated.ts`
 
-Regenerate them with `pressluft generate`.
+These are regenerated automatically by `pressluft dev` and `pressluft build`.
 
 Ignore generated/local directories during search unless the task explicitly needs them:
 - `web/.output`
@@ -16,6 +16,11 @@ Ignore generated/local directories during search unless the task explicitly need
 - `.venv`
 
 The three binaries are:
-- `cmd/pressluft/` — the CLI (dev tools, build, generate, diagnostics)
+- `cmd/pressluft/` — the CLI (dev tools, build, doctor)
 - `cmd/pressluft-server/` — the control-plane server (runtime)
 - `cmd/pressluft-agent/` — the server agent (runtime)
+
+Local dev state lives in `.pressluft/` at the repo root (SQLite DB, keys).
+To reset: `rm -rf .pressluft`
+
+To check system health: `pressluft doctor`

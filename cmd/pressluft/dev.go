@@ -121,16 +121,23 @@ func runDev(args []string) error {
 		printTunnelWarning()
 	}
 
+	// Generate contracts before starting.
+	fmt.Println("Generating contracts...")
+	if err := runGenerate(nil); err != nil {
+		return fmt.Errorf("generate contracts: %w", err)
+	}
+
+	// Run doctor checks.
 	report := devdiag.Inspect(runtime)
-	printDiagReport(report)
+	printDoctorReport(report)
 	if !report.Healthy() {
 		fmt.Println()
-		fmt.Println("preflight failed")
 		for _, issue := range report.Issues() {
-			fmt.Printf("- %s\n", issue)
+			fmt.Printf("  - %s\n", issue)
 		}
-		fmt.Println("Suggested next steps: pressluft status ; pressluft reset --force")
-		return fmt.Errorf("preflight checks failed")
+		fmt.Println()
+		fmt.Println("To reset local state: rm -rf .pressluft")
+		return fmt.Errorf("doctor checks failed")
 	}
 
 	fmt.Printf("Dev state: %s/.pressluft/\n", rootDir)

@@ -2,6 +2,7 @@ package devdiag
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"pressluft/internal/envconfig"
 	"pressluft/internal/pki"
 	"pressluft/internal/platform"
+	"pressluft/internal/security"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,18 +25,20 @@ const (
 )
 
 type Check struct {
-	Name   string
-	Status CheckStatus
-	Detail string
+	Name   string      `json:"name"`
+	Status CheckStatus `json:"status"`
+	Detail string      `json:"detail"`
 }
 
 type Report struct {
-	Runtime                  envconfig.ControlPlaneRuntime
-	CallbackURLMode          platform.CallbackURLMode
-	DurableReconnectExpected bool
-	Checks                   []Check
+	Runtime                  envconfig.ControlPlaneRuntime `json:"-"`
+	CallbackURLMode          platform.CallbackURLMode      `json:"callback_url_mode"`
+	DurableReconnectExpected bool                          `json:"durable_reconnect"`
+	Checks                   []Check                       `json:"checks"`
 }
 
+// Inspect runs all diagnostic checks and returns a consolidated report.
+// This is the single source of truth for system health.
 func Inspect(runtime envconfig.ControlPlaneRuntime) Report {
 	report := Report{
 		Runtime:                  runtime,
@@ -42,10 +46,18 @@ func Inspect(runtime envconfig.ControlPlaneRuntime) Report {
 		DurableReconnectExpected: platform.DetectCallbackURLMode(runtime.ControlPlaneURL) == platform.CallbackURLModeStable,
 	}
 
+	// File existence checks.
 	allowAgeGenerate := strings.TrimSpace(os.Getenv("PRESSLUFT_AGE_KEY_PATH")) == ""
 	report.add(checkOptionalFile("db", runtime.DBPath, true))
 	report.add(checkAgeKey(runtime.AgeKeyPath, allowAgeGenerate))
 	report.add(checkOptionalFile("session_key", runtime.SessionSecretPath, true))
+
+	// Deep checks: verify artifacts are loadable, not just present.
+	report.add(checkDBOpenable(runtime.DBPath))
+	report.add(checkAgeKeyLoadable(runtime.AgeKeyPath))
+	report.add(checkCAKeyLoadable(runtime.CAKeyPath, runtime.AgeKeyPath))
+
+	// CA state consistency (cert in DB matches key on disk).
 	report.add(checkStoredCA(runtime.DBPath, runtime.AgeKeyPath, runtime.CAKeyPath))
 
 	return report
@@ -68,6 +80,11 @@ func (r Report) Issues() []string {
 		}
 	}
 	return issues
+}
+
+// JSON returns the report as indented JSON bytes.
+func (r Report) JSON() ([]byte, error) {
+	return json.MarshalIndent(r, "", "  ")
 }
 
 func checkAgeKey(path string, allowGenerate bool) Check {
@@ -98,6 +115,56 @@ func checkFile(name, path string, required bool) Check {
 		return Check{Name: name, Status: CheckStatusError, Detail: fmt.Sprintf("%s is missing: %s", name, path)}
 	}
 	return Check{Name: name, Status: CheckStatusWarning, Detail: fmt.Sprintf("%s is missing and will be created on startup: %s", name, path)}
+}
+
+func checkDBOpenable(dbPath string) Check {
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return Check{Name: "db_openable", Status: CheckStatusWarning, Detail: "database does not exist yet; will be created on startup"}
+		}
+		return Check{Name: "db_openable", Status: CheckStatusError, Detail: fmt.Sprintf("stat db: %v", err)}
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return Check{Name: "db_openable", Status: CheckStatusError, Detail: fmt.Sprintf("open db: %v", err)}
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return Check{Name: "db_openable", Status: CheckStatusError, Detail: fmt.Sprintf("ping db: %v", err)}
+	}
+	return Check{Name: "db_openable", Status: CheckStatusOK, Detail: "database opens and responds to ping"}
+}
+
+func checkAgeKeyLoadable(path string) Check {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return Check{Name: "age_key_loadable", Status: CheckStatusWarning, Detail: "age key does not exist yet; will be generated on startup"}
+		}
+		return Check{Name: "age_key_loadable", Status: CheckStatusError, Detail: fmt.Sprintf("stat age key: %v", err)}
+	}
+	if err := security.ValidateAgeKey(path); err != nil {
+		return Check{Name: "age_key_loadable", Status: CheckStatusError, Detail: fmt.Sprintf("age key is invalid: %v", err)}
+	}
+	return Check{Name: "age_key_loadable", Status: CheckStatusOK, Detail: "age key parses correctly"}
+}
+
+func checkCAKeyLoadable(caKeyPath, ageKeyPath string) Check {
+	if _, err := os.Stat(caKeyPath); err != nil {
+		if os.IsNotExist(err) {
+			return Check{Name: "ca_key_loadable", Status: CheckStatusWarning, Detail: "CA key does not exist yet; will be created on startup"}
+		}
+		return Check{Name: "ca_key_loadable", Status: CheckStatusError, Detail: fmt.Sprintf("stat CA key: %v", err)}
+	}
+	if _, err := os.Stat(ageKeyPath); err != nil {
+		if os.IsNotExist(err) {
+			return Check{Name: "ca_key_loadable", Status: CheckStatusWarning, Detail: "age key missing; cannot verify CA key"}
+		}
+		return Check{Name: "ca_key_loadable", Status: CheckStatusError, Detail: fmt.Sprintf("stat age key for CA verification: %v", err)}
+	}
+	if err := pki.ValidateCAKey(caKeyPath, ageKeyPath); err != nil {
+		return Check{Name: "ca_key_loadable", Status: CheckStatusError, Detail: fmt.Sprintf("CA key decryption failed: %v", err)}
+	}
+	return Check{Name: "ca_key_loadable", Status: CheckStatusOK, Detail: "CA key decrypts successfully"}
 }
 
 func checkStoredCA(dbPath, ageKeyPath, caKeyPath string) Check {
