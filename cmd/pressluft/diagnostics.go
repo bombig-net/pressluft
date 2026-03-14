@@ -23,7 +23,7 @@ type tableCount struct {
 	Count int64  `json:"count"`
 }
 
-type healthCheck struct {
+type healthCheckResult struct {
 	Name   string `json:"name"`
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail,omitempty"`
@@ -36,8 +36,8 @@ type statsOutput struct {
 }
 
 type healthOutput struct {
-	Mode   string        `json:"mode"`
-	Checks []healthCheck `json:"checks"`
+	Mode   string              `json:"mode"`
+	Checks []healthCheckResult `json:"checks"`
 }
 
 type jobEvent struct {
@@ -88,144 +88,64 @@ type sshAccessTarget struct {
 	Key  string
 }
 
-func main() {
-	args := os.Args[1:]
-	command := "status"
-	if len(args) > 0 {
-		command = args[0]
-		args = args[1:]
-	}
-
+func resolveRuntime() (envconfig.ControlPlaneRuntime, error) {
 	cwd, _ := os.Getwd()
-	runtime, err := envconfig.ResolveControlPlaneRuntime(true, cwd)
-	if err != nil {
-		exitErr(fmt.Errorf("resolve control-plane runtime: %w", err))
-	}
-
-	switch command {
-	case "status":
-		printReport(devdiag.Inspect(runtime))
-	case "preflight":
-		report := devdiag.Inspect(runtime)
-		printReport(report)
-		if !report.Healthy() {
-			fmt.Println()
-			fmt.Println("preflight failed")
-			for _, issue := range report.Issues() {
-				fmt.Printf("- %s\n", issue)
-			}
-			fmt.Println("Suggested next steps: make dev-status ; make dev-reset CONFIRM=1")
-			os.Exit(1)
-		}
-	case "stats":
-		if err := runStats(runtime); err != nil {
-			exitErr(err)
-		}
-	case "events":
-		if err := runEvents(runtime, args); err != nil {
-			exitErr(err)
-		}
-	case "health":
-		if err := runHealth(runtime); err != nil {
-			exitErr(err)
-		}
-	case "server-ssh":
-		if err := runServerSSH(runtime, args); err != nil {
-			exitErr(err)
-		}
-	case "reset":
-		if err := reset(runtime, args); err != nil {
-			exitErr(err)
-		}
-	case "help", "-h", "--help":
-		usage()
-	default:
-		exitErr(fmt.Errorf("unknown command %q", command))
-	}
+	return envconfig.ResolveControlPlaneRuntime(true, cwd)
 }
 
-func usage() {
-	fmt.Println("pressluft-devctl")
-	fmt.Println("  status                   Inspect local dev state and callback durability")
-	fmt.Println("  preflight                Validate local state before starting dev")
-	fmt.Println("  stats                    Show row counts for key runtime tables")
-	fmt.Println("  events [--limit N]       Show recent job_events and activity rows")
-	fmt.Println("  health                   Verify runtime artifacts can be opened")
-	fmt.Println("  server-ssh TARGET        Print or execute one-off SSH access for a server")
-	fmt.Println("  reset --force            Remove the local Pressluft state bundle")
-}
-
-func runStats(runtime envconfig.ControlPlaneRuntime) error {
-	db, err := openExistingDB(runtime.DBPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	tables := []string{
-		"providers",
-		"servers",
-		"sites",
-		"domains",
-		"jobs",
-		"job_events",
-		"activity",
-		"ca_certificates",
-		"node_certificates",
-		"registration_tokens",
-		"agent_ws_tokens",
-		"users",
-		"sessions",
-	}
-
-	counts := make([]tableCount, 0, len(tables))
-	for _, table := range tables {
-		count, err := countRows(db, table)
-		if err != nil {
-			return fmt.Errorf("count %s: %w", table, err)
+func runStatus(args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft status — inspect local dev state and callback durability")
+			return nil
 		}
-		counts = append(counts, tableCount{Table: table, Count: count})
 	}
-
-	return writeJSON(statsOutput{
-		Mode:        envconfig.Mode,
-		DBPath:      runtime.DBPath,
-		TableCounts: counts,
-	})
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
+	}
+	printDiagReport(devdiag.Inspect(runtime))
+	return nil
 }
 
-func runEvents(runtime envconfig.ControlPlaneRuntime, args []string) error {
-	limit, err := parseEventsLimit(args)
-	if err != nil {
-		return err
+func runPreflight(args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft preflight — validate local state before starting dev")
+			return nil
+		}
 	}
-
-	db, err := openExistingDB(runtime.DBPath)
+	runtime, err := resolveRuntime()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve runtime: %w", err)
 	}
-	defer db.Close()
-
-	jobEvents, err := recentJobEvents(db, limit)
-	if err != nil {
-		return err
+	report := devdiag.Inspect(runtime)
+	printDiagReport(report)
+	if !report.Healthy() {
+		fmt.Println()
+		fmt.Println("preflight failed")
+		for _, issue := range report.Issues() {
+			fmt.Printf("- %s\n", issue)
+		}
+		fmt.Println("Suggested next steps: pressluft status ; pressluft reset --force")
+		os.Exit(1)
 	}
-	activityEvents, err := recentActivity(db, limit)
-	if err != nil {
-		return err
-	}
-
-	return writeJSON(eventsOutput{
-		Mode:      envconfig.Mode,
-		DBPath:    runtime.DBPath,
-		Limit:     limit,
-		JobEvents: jobEvents,
-		Activity:  activityEvents,
-	})
+	return nil
 }
 
-func runHealth(runtime envconfig.ControlPlaneRuntime) error {
-	checks := []healthCheck{
+func runHealth(args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft health — verify runtime artifacts can be opened")
+			return nil
+		}
+	}
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
+	}
+
+	checks := []healthCheckResult{
 		pathCheck("data_dir_exists", runtime.DataDir),
 		fileCheck("db_exists", runtime.DBPath),
 		fileCheck("age_key_exists", runtime.AgeKeyPath),
@@ -255,10 +175,124 @@ func runHealth(runtime envconfig.ControlPlaneRuntime) error {
 	return nil
 }
 
-func runServerSSH(runtime envconfig.ControlPlaneRuntime, args []string) error {
+func runStats(args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft stats — show row counts for key runtime tables")
+			return nil
+		}
+	}
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
+	}
+
+	db, err := openExistingDB(runtime.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tables := []string{
+		"providers", "servers", "sites", "domains", "jobs", "job_events",
+		"activity", "ca_certificates", "node_certificates", "registration_tokens",
+		"agent_ws_tokens", "users", "sessions",
+	}
+
+	counts := make([]tableCount, 0, len(tables))
+	for _, table := range tables {
+		count, err := countRows(db, table)
+		if err != nil {
+			return fmt.Errorf("count %s: %w", table, err)
+		}
+		counts = append(counts, tableCount{Table: table, Count: count})
+	}
+
+	return writeJSON(statsOutput{
+		Mode:        envconfig.Mode,
+		DBPath:      runtime.DBPath,
+		TableCounts: counts,
+	})
+}
+
+func runEvents(args []string) error {
+	limit, err := parseEventsLimit(args)
+	if err != nil {
+		return err
+	}
+
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
+	}
+
+	db, err := openExistingDB(runtime.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	jobEvents, err := recentJobEvents(db, limit)
+	if err != nil {
+		return err
+	}
+	activityEvents, err := recentActivity(db, limit)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(eventsOutput{
+		Mode:      envconfig.Mode,
+		DBPath:    runtime.DBPath,
+		Limit:     limit,
+		JobEvents: jobEvents,
+		Activity:  activityEvents,
+	})
+}
+
+func runReset(args []string) error {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft reset --force — remove the local Pressluft state bundle")
+			return nil
+		}
+	}
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
+	}
+
+	if len(args) != 1 || args[0] != "--force" {
+		return fmt.Errorf("reset requires --force")
+	}
+	paths := []string{
+		runtime.DBPath,
+		runtime.DBPath + "-wal",
+		runtime.DBPath + "-shm",
+		runtime.AgeKeyPath,
+		runtime.CAKeyPath,
+		runtime.SessionSecretPath,
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	_ = os.Remove(runtime.DataDir)
+	fmt.Printf("Removed Pressluft local state bundle:\n- %s\n- %s\n- %s\n- %s\n",
+		runtime.DBPath, runtime.AgeKeyPath, runtime.CAKeyPath, runtime.SessionSecretPath)
+	return nil
+}
+
+func runServerSSH(args []string) error {
 	target, execSSH, printKey, err := parseServerSSHArgs(args)
 	if err != nil {
 		return err
+	}
+
+	runtime, err := resolveRuntime()
+	if err != nil {
+		return fmt.Errorf("resolve runtime: %w", err)
 	}
 
 	db, err := openExistingDB(runtime.DBPath)
@@ -321,7 +355,19 @@ func runServerSSH(runtime envconfig.ControlPlaneRuntime, args []string) error {
 	return nil
 }
 
+// Helpers ported from cmd/pressluft-devctl/main.go
+
 func parseServerSSHArgs(args []string) (target string, execSSH bool, printKey bool, err error) {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Println("pressluft server-ssh TARGET — print or execute SSH access for a managed server")
+			fmt.Println()
+			fmt.Println("Flags:")
+			fmt.Println("  --exec       Open an interactive SSH session")
+			fmt.Println("  --print-key  Print the decrypted SSH private key to stdout")
+			os.Exit(0)
+		}
+	}
 	for _, arg := range args {
 		switch arg {
 		case "--exec":
@@ -396,6 +442,9 @@ func parseEventsLimit(args []string) (int, error) {
 	limit := 20
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "-h", "--help":
+			fmt.Println("pressluft events [--limit N] — show recent job events and activity rows")
+			os.Exit(0)
 		case "--limit":
 			if i+1 >= len(args) {
 				return 0, fmt.Errorf("--limit requires a value")
@@ -413,7 +462,7 @@ func parseEventsLimit(args []string) (int, error) {
 	return limit, nil
 }
 
-func printReport(report devdiag.Report) {
+func printDiagReport(report devdiag.Report) {
 	fmt.Println("Pressluft dev state")
 	fmt.Printf("execution_mode: %s\n", report.Runtime.ExecutionMode)
 	fmt.Printf("data_dir: %s\n", report.Runtime.DataDir)
@@ -436,28 +485,6 @@ func printReport(report devdiag.Report) {
 	for _, check := range report.Checks {
 		fmt.Printf("- [%s] %s: %s\n", check.Status, check.Name, check.Detail)
 	}
-}
-
-func reset(runtime envconfig.ControlPlaneRuntime, args []string) error {
-	if len(args) != 1 || args[0] != "--force" {
-		return fmt.Errorf("reset requires --force")
-	}
-	paths := []string{
-		runtime.DBPath,
-		runtime.DBPath + "-wal",
-		runtime.DBPath + "-shm",
-		runtime.AgeKeyPath,
-		runtime.CAKeyPath,
-		runtime.SessionSecretPath,
-	}
-	for _, path := range paths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", path, err)
-		}
-	}
-	_ = os.Remove(runtime.DataDir)
-	fmt.Printf("Removed Pressluft local state bundle:\n- %s\n- %s\n- %s\n- %s\n", runtime.DBPath, runtime.AgeKeyPath, runtime.CAKeyPath, runtime.SessionSecretPath)
-	return nil
 }
 
 func writeJSON(v any) error {
@@ -584,27 +611,27 @@ func recentActivity(db *sql.DB, limit int) ([]activityEvent, error) {
 	return events, nil
 }
 
-func fileCheck(name, path string) healthCheck {
+func fileCheck(name, path string) healthCheckResult {
 	if info, err := os.Stat(path); err != nil {
-		return healthCheck{Name: name, Detail: err.Error()}
+		return healthCheckResult{Name: name, Detail: err.Error()}
 	} else if info.IsDir() {
-		return healthCheck{Name: name, Detail: "path is a directory"}
+		return healthCheckResult{Name: name, Detail: "path is a directory"}
 	}
-	return healthCheck{Name: name, OK: true}
+	return healthCheckResult{Name: name, OK: true}
 }
 
-func pathCheck(name, path string) healthCheck {
+func pathCheck(name, path string) healthCheckResult {
 	if _, err := os.Stat(path); err != nil {
-		return healthCheck{Name: name, Detail: err.Error()}
+		return healthCheckResult{Name: name, Detail: err.Error()}
 	}
-	return healthCheck{Name: name, OK: true}
+	return healthCheckResult{Name: name, OK: true}
 }
 
-func resultCheck(name string, err error) healthCheck {
+func resultCheck(name string, err error) healthCheckResult {
 	if err != nil {
-		return healthCheck{Name: name, Detail: err.Error()}
+		return healthCheckResult{Name: name, Detail: err.Error()}
 	}
-	return healthCheck{Name: name, OK: true}
+	return healthCheckResult{Name: name, OK: true}
 }
 
 func nullStringPtr(value sql.NullString) *string {
@@ -613,9 +640,4 @@ func nullStringPtr(value sql.NullString) *string {
 	}
 	text := value.String
 	return &text
-}
-
-func exitErr(err error) {
-	fmt.Fprintf(os.Stderr, "pressluft-devctl: %v\n", err)
-	os.Exit(1)
 }

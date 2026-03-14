@@ -26,7 +26,7 @@ func TestGeneratedAPITypeScriptContractIsFresh(t *testing.T) {
 	}
 
 	if string(current) != rendered {
-		t.Fatalf("generated api contract is stale; run `make generate-contract`, `make generate-api-contract`, or `go run ./cmd/pressluft-contractgen -format api-ts > web/app/lib/api-contract.ts`")
+		t.Fatalf("generated api contract is stale; run `pressluft generate`")
 	}
 }
 
