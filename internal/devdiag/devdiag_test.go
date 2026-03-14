@@ -54,8 +54,8 @@ func TestInspectReportsStoredCAMismatch(t *testing.T) {
 		CAKeyPath:         caPath,
 		SessionSecretPath: sessionPath,
 	})
-	if report.HealthyFor(WorkflowDev) {
-		t.Fatal("HealthyFor(dev) = true, want false")
+	if report.Healthy() {
+		t.Fatal("Healthy() = true, want false")
 	}
 	found := false
 	for _, check := range report.Checks {
@@ -78,7 +78,7 @@ func TestInspectWarnsWhenStateIsMissing(t *testing.T) {
 		CAKeyPath:         filepath.Join(dataDir, "ca.key"),
 		SessionSecretPath: filepath.Join(dataDir, "session.key"),
 	})
-	if !report.HealthyFor(WorkflowDev) {
-		t.Fatal("HealthyFor(dev) = false, want true when only startup-generated state is missing")
+	if !report.Healthy() {
+		t.Fatal("Healthy() = false, want true when only startup-generated state is missing")
 	}
 }

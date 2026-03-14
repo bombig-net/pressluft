@@ -57,7 +57,7 @@ ANSIBLE_PLAYBOOKS := \
 	ops/ansible/playbooks/hetzner/resize.yml \
 	ops/ansible/playbooks/hetzner/volume.yml
 
-.PHONY: help prepare-env generate-contract generate-api-contract contract-json frontend-install frontend-generate embed-web build app-build agent agent-dev all dev dev-lab dev-status dev-reset run format fmt-check lint test test-unit test-integration validate-go validate-web validate-profiles validate-profile-schema validate-profile-consistency ansible-syntax ansible-check ansible-validate validate clean
+.PHONY: help prepare-env generate-contract generate-api-contract contract-json frontend-install frontend-generate embed-web build app-build agent agent-dev all dev dev-status dev-reset run format fmt-check lint test test-unit test-integration validate-go validate-web validate-profiles validate-profile-schema validate-profile-consistency ansible-syntax ansible-check ansible-validate validate clean
 
 help:
 	@printf '%s\n' 'Targets:'
@@ -75,8 +75,7 @@ help:
 	@printf '  %-28s %s\n' 'validate-web' 'Generate the frontend static assets and verify the output exists'
 	@printf '  %-28s %s\n' 'validate' 'Run the full supported validation suite for this repository'
 	@printf '  %-28s %s\n' 'all' 'Build the control plane and agent binaries'
-	@printf '  %-28s %s\n' 'dev' 'Run the disposable local dev stack with session-scoped remote connectivity'
-	@printf '  %-28s %s\n' 'dev-lab' 'Run the stable local lab workflow for durable remote-agent testing'
+	@printf '  %-28s %s\n' 'dev' 'Run the local dev stack (set PRESSLUFT_CONTROL_PLANE_URL for stable connectivity)'
 	@printf '  %-28s %s\n' 'dev-status' 'Inspect the local Pressluft state bundle and callback durability'
 	@printf '  %-28s %s\n' 'dev-reset' 'Reset the local Pressluft state bundle (requires CONFIRM=1)'
 
@@ -136,10 +135,7 @@ dev-health: devctl
 all: build agent
 
 dev: agent-dev frontend-install
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" DEV_WORKFLOW="dev" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
-
-dev-lab: agent-dev frontend-install
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" DEV_WORKFLOW="lab" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" DEV_API_PORT="$(DEV_API_PORT)" DEV_UI_PORT="$(DEV_UI_PORT)" DEV_UI_HOST="$(DEV_UI_HOST)" WEB_DIR="$(WEB_DIR)" NPM="$(NPM)" GO="$(GO)" ./ops/scripts/dev.sh
 
 dev-reset: devctl
 	@test "$(CONFIRM)" = "1" || { printf '%s\n' 'dev-reset is destructive. Re-run with CONFIRM=1.'; exit 1; }
