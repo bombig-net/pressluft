@@ -15,4 +15,5 @@ web/.nuxt/
 web/.output/
 
 internal/server/dist/*
+internal/controlplane/server/dist/
 !internal/server/dist/.gitkeep
