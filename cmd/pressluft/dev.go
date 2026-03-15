@@ -258,8 +258,10 @@ func runDev(cmd *cobra.Command, args []string) error {
 	}
 
 	done := make(chan struct{}, 2)
-	go func() { _ = backend.Wait(); done <- struct{}{} }()
-	go func() { _ = nuxt.Wait(); done <- struct{}{} }()
+	backendErrCh := make(chan error, 1)
+	nuxtErrCh := make(chan error, 1)
+	go func() { backendErrCh <- backend.Wait(); done <- struct{}{} }()
+	go func() { nuxtErrCh <- nuxt.Wait(); done <- struct{}{} }()
 
 	select {
 	case <-sigCh:
@@ -267,6 +269,21 @@ func runDev(cmd *cobra.Command, args []string) error {
 		cleanup()
 	case <-done:
 		cleanup()
+		// Check if either child process exited with an error.
+		select {
+		case err := <-backendErrCh:
+			if err != nil {
+				return fmt.Errorf("backend process exited with error: %w", err)
+			}
+		default:
+		}
+		select {
+		case err := <-nuxtErrCh:
+			if err != nil {
+				return fmt.Errorf("nuxt process exited with error: %w", err)
+			}
+		default:
+		}
 	}
 
 	return nil

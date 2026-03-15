@@ -158,7 +158,7 @@ func buildFrontend(rootDir string) error {
 }
 
 func embedFrontend(rootDir string) error {
-	embedDir := filepath.Join(rootDir, "internal", "server", "dist")
+	embedDir := filepath.Join(rootDir, "internal", "controlplane", "server", "dist")
 	if err := os.RemoveAll(embedDir); err != nil {
 		return err
 	}
