@@ -14,8 +14,8 @@ import { useDomains, type StoredDomain } from "~/composables/useDomains";
 import { useNotImplemented } from "~/composables/useNotImplemented";
 import { useServers } from "~/composables/useServers";
 import { useSites, type SiteHealthResponse, type StoredSite } from "~/composables/useSites";
-import { siteDeploymentMeta, siteRuntimeMeta, formatSiteDate } from "~/composables/useSiteHelpers";
-import { errorMessage } from "~/lib/utils";
+import { siteDeploymentMeta, formatSiteDate } from "~/composables/useSiteHelpers";
+import { copyToClipboard, errorMessage, formatShortId } from "~/lib/utils";
 
 interface SiteSection {
   key: string;
@@ -94,8 +94,15 @@ const activeSection = computed(() => {
   return sections.some((section) => section.key === tab) ? tab : "overview";
 });
 
+const fallbackSection: SiteSection = sections[0] ?? {
+  key: "overview",
+  label: "Overview",
+  icon: "",
+  description: "Operational dashboard and health summary",
+};
+
 const currentSection = computed(
-  () => sections.find((section) => section.key === activeSection.value) || sections[0],
+  () => sections.find((section) => section.key === activeSection.value) || fallbackSection,
 );
 
 const isMobileSidebarOpen = ref(false);
@@ -131,13 +138,68 @@ const currentServer = computed(() => servers.value.find((server) => server.id ==
 const currentServerIPv4 = computed(() => currentServer.value?.ipv4 || "");
 const serverLocation = computed(() => currentServer.value?.location || "");
 const serverProfile = computed(() => currentServer.value?.profile_key || "");
+const environmentOptions = computed(() => [
+  {
+    value: "production",
+    label: "Production",
+    detail: site.value?.primary_domain || "Primary environment",
+  },
+]);
+const selectedEnvironment = ref("production");
+const copiedId = ref("");
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 const canOpenSite = computed(() => !!site.value?.primary_domain && site.value.deployment_state === "ready");
+
+const siteHealthScore = computed(() => {
+  if (!siteHealth.value?.snapshot) return null;
+
+  const checks = siteHealth.value.snapshot.checks || [];
+  const services = siteHealth.value.snapshot.services || [];
+  const total = checks.length + services.length;
+  if (total === 0) return null;
+
+  const passingChecks = checks.filter((check) => check.ok).length;
+  const passingServices = services.filter((service) => service.active_state === "active").length;
+  return Math.round(((passingChecks + passingServices) / total) * 100);
+});
+
+const healthBadgeClass = computed(() => {
+  if (siteHealthScore.value === null) {
+    return "border-border/60 bg-muted/60 text-muted-foreground";
+  }
+  if (siteHealthScore.value >= 80) {
+    return "border-primary/30 bg-primary/10 text-primary";
+  }
+  if (siteHealthScore.value >= 50) {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  }
+  return "border-destructive/30 bg-destructive/10 text-destructive";
+});
+
+const healthBadgeLabel = computed(() => {
+  if (siteHealthScore.value === null) return "Health pending";
+  return `${siteHealthScore.value}% health`;
+});
+
+const siteIdPreview = computed(() => formatShortId(site.value?.id));
+const serverIdPreview = computed(() => formatShortId(site.value?.server_id));
 
 const openSite = () => {
   if (site.value?.primary_domain) {
     window.open(`https://${site.value.primary_domain}`, "_blank");
   }
+};
+
+const copyIdentifier = async (kind: string, value: string) => {
+  const copied = await copyToClipboard(value);
+  if (!copied) return;
+  copiedId.value = kind;
+  if (copyResetTimer) clearTimeout(copyResetTimer);
+  copyResetTimer = setTimeout(() => {
+    copiedId.value = "";
+    copyResetTimer = null;
+  }, 1500);
 };
 
 const settingsName = computed(() => site.value?.name || "");
@@ -270,6 +332,10 @@ watch(siteId, async (value, previous) => {
   if (!value || value === previous) return;
   await loadPage();
 });
+
+onUnmounted(() => {
+  if (copyResetTimer) clearTimeout(copyResetTimer);
+});
 </script>
 
 <template>
@@ -280,18 +346,38 @@ watch(siteId, async (value, previous) => {
       <div class="flex flex-col gap-5 rounded-[28px] border border-border/60 bg-[linear-gradient(135deg,rgba(18,34,42,0.96),rgba(18,58,56,0.9)_52%,rgba(28,38,61,0.92))] px-7 py-7 text-white shadow-[0_32px_120px_-52px_rgba(9,18,32,0.85)]">
         <NuxtLink to="/sites" class="text-xs font-semibold uppercase tracking-[0.22em] text-white/65 transition hover:text-white">Back to sites</NuxtLink>
 
-        <div class="flex flex-col gap-1">
-          <div class="flex flex-wrap items-center gap-3">
-            <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">{{ site.name }}</h1>
-            <Badge variant="outline" :class="siteDeploymentMeta(site.deployment_state).className">{{ siteDeploymentMeta(site.deployment_state).label }}</Badge>
-            <Badge variant="outline" :class="siteRuntimeMeta(site.runtime_health_state).className">{{ siteRuntimeMeta(site.runtime_health_state).label }}</Badge>
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">{{ site.name }}</h1>
+              <Badge variant="outline" :class="siteDeploymentMeta(site.deployment_state).className">{{ siteDeploymentMeta(site.deployment_state).label }}</Badge>
+              <Badge variant="outline" :class="healthBadgeClass">{{ healthBadgeLabel }}</Badge>
+            </div>
+            <p class="flex flex-wrap items-center gap-x-2 text-sm text-white/55">
+              <span>{{ site.primary_domain || "No hostname" }}</span>
+              <span v-if="currentServer?.name || site.server_name" class="before:mr-2 before:content-['·']">{{ currentServer?.name || site.server_name }}</span>
+              <span v-if="serverLocation" class="before:mr-2 before:content-['·']">{{ serverLocation }}</span>
+              <span v-if="serverProfile" class="before:mr-2 before:content-['·']">{{ serverProfile }}</span>
+            </p>
+            <div class="flex flex-wrap items-center gap-2 text-xs text-white/65">
+              <button type="button" class="rounded-full border border-white/12 bg-white/6 px-2.5 py-1 font-mono transition hover:bg-white/12" :title="site.id" @click="copyIdentifier('site', site.id)">
+                {{ copiedId === 'site' ? 'Site ID copied' : `Site ${siteIdPreview}` }}
+              </button>
+              <button type="button" class="rounded-full border border-white/12 bg-white/6 px-2.5 py-1 font-mono transition hover:bg-white/12" :title="site.server_id" @click="copyIdentifier('server', site.server_id)">
+                {{ copiedId === 'server' ? 'Server ID copied' : `Server ${serverIdPreview}` }}
+              </button>
+            </div>
           </div>
-          <p class="flex flex-wrap items-center gap-x-2 text-sm text-white/55">
-            <span>{{ site.primary_domain || "No hostname" }}</span>
-            <span v-if="site.php_version" class="before:mr-2 before:content-['·']">PHP {{ site.php_version }}</span>
-            <span v-if="serverLocation" class="before:mr-2 before:content-['·']">{{ serverLocation }}</span>
-            <span v-if="serverProfile" class="before:mr-2 before:content-['·']">{{ serverProfile }}</span>
-          </p>
+
+          <div class="w-full max-w-xs rounded-2xl border border-white/10 bg-white/6 p-4 lg:w-72">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">Environment</p>
+            <select v-model="selectedEnvironment" class="mt-3 flex h-10 w-full rounded-xl border border-white/12 bg-white/10 px-3 text-sm text-white outline-none transition focus:border-white/30">
+              <option v-for="option in environmentOptions" :key="option.value" :value="option.value" class="text-foreground">
+                {{ option.label }}
+              </option>
+            </select>
+            <p class="mt-2 text-xs text-white/55">{{ environmentOptions.find((option) => option.value === selectedEnvironment)?.detail }}</p>
+          </div>
         </div>
 
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -311,17 +397,6 @@ watch(siteId, async (value, previous) => {
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <Button size="sm" class="bg-white/10 text-white/70 hover:bg-white/20 hover:text-white border-white/10 border shadow-none" @click="triggerNotImplemented">
-              <svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
-              Create Backup
-            </Button>
-            <Button size="sm" class="bg-white/10 text-white/70 hover:bg-white/20 hover:text-white border-white/10 border shadow-none" @click="triggerNotImplemented">
-              <svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-              Clear Cache
-            </Button>
-
-            <div class="hidden sm:block h-5 w-px bg-white/15" />
-
             <label class="flex items-center gap-2 cursor-pointer" @click.prevent="triggerNotImplemented">
               <Switch :checked="false" class="data-[state=unchecked]:bg-white/15 data-[state=checked]:bg-primary border-white/10" />
               <span class="text-xs text-white/70">Maintenance</span>
@@ -330,6 +405,17 @@ watch(siteId, async (value, previous) => {
               <Switch :checked="false" class="data-[state=unchecked]:bg-white/15 data-[state=checked]:bg-primary border-white/10" />
               <span class="text-xs text-white/70">Indexing</span>
             </label>
+
+            <div class="hidden sm:block h-5 w-px bg-white/15" />
+
+            <Button size="sm" class="bg-white/10 text-white/70 hover:bg-white/20 hover:text-white border-white/10 border shadow-none" @click="triggerNotImplemented">
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+              Create Backup
+            </Button>
+            <Button size="sm" class="bg-white/10 text-white/70 hover:bg-white/20 hover:text-white border-white/10 border shadow-none" @click="triggerNotImplemented">
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+              Clear Cache
+            </Button>
           </div>
         </div>
       </div>
@@ -419,7 +505,13 @@ watch(siteId, async (value, previous) => {
         </aside>
 
         <div class="min-w-0 flex-1">
-          <Card class="rounded-xl border border-border/60 bg-card/50 py-0 shadow-none backdrop-blur-sm">
+          <SiteOverview
+            v-if="activeSection === 'overview'"
+            :site="site"
+            :site-health="siteHealth"
+          />
+
+          <Card v-else class="rounded-xl border border-border/60 bg-card/50 py-0 shadow-none backdrop-blur-sm">
             <CardHeader class="border-b border-border/40 px-6 py-5">
               <div>
                 <h2 class="text-lg font-semibold text-foreground">{{ currentSection.label }}</h2>
@@ -428,18 +520,9 @@ watch(siteId, async (value, previous) => {
             </CardHeader>
 
             <CardContent class="px-6 py-5">
-              <SiteOverview
-                v-if="activeSection === 'overview'"
-                :site="site"
-                :site-health="siteHealth"
-                :site-domains="siteDomains"
-                :activities="activities"
-                :server-name="currentServer?.name || site.server_name"
-                :server-id="site.server_id"
-              />
 
               <SiteHostnames
-                v-else-if="activeSection === 'domains'"
+                v-if="activeSection === 'domains'"
                 :domains="siteDomains"
                 :current-server-i-pv4="currentServerIPv4"
                 :saving="saving"
@@ -473,7 +556,7 @@ watch(siteId, async (value, previous) => {
                       </div>
                       <div class="flex items-center justify-between gap-3 text-sm">
                         <span class="text-muted-foreground">Install path</span>
-                        <span class="font-mono text-xs text-foreground">{{ site.install_path || "--" }}</span>
+                        <span class="font-mono text-xs text-foreground">{{ site.wordpress_path || "--" }}</span>
                       </div>
                     </div>
                   </div>
