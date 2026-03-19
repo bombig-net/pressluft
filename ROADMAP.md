@@ -18,6 +18,9 @@ Add offsite S3-Backups with restore flow and automation.
 ## Milestone: Security
 Add complete `wpvulnerability.com` checks for servers, sites, and plugins.
 
+Milestone: Extensibility Foundation
+Research and define a minimal extension system baseline, including integrations, plugins, and add-ons, to ensure the core architecture remains open, composable, and adaptable without committing to specific implementations.
+
 ## Milestone: Performance
 Implement additional performance features like caching, CDN support, image optimization, and related tuning.
 
